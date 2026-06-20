@@ -24,10 +24,10 @@ const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const START_CREDITS = 20000;
 const IMAGE_COST = 2;   // credits per generated image
-const VIDEO_COST = 10;  // credits per generated video
+const VIDEO_COST = { fast: 20, lite: 10 };  // credits per generated video clip, by model
 
 const IMAGE_MODEL = "gemini-3-pro-image-preview";   // Nano Banana Pro
-const VIDEO_MODEL = "veo-3.1-fast-generate-preview"; // Veo 3.1 Fast
+const VIDEO_MODELS = { fast: "veo-3.1-fast-generate-preview", lite: "veo-3.1-lite-generate-preview" };
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 if (!API_KEY) {
@@ -170,11 +170,16 @@ function toInlineImage(dataUrl) {
   if (!m) return null;
   return { inlineData: { mimeType: m[1], data: m[2] } };
 }
+function saveInputUrl(d, userId) {
+  const im = toImage(d);
+  if (!im) return null;
+  return saveMedia(Buffer.from(im.imageBytes, "base64"), (im.mimeType.split("/")[1] || "png").replace("jpeg", "jpg").replace("+xml", ""), userId);
+}
 function clientRecord(r) {
   return {
-    id: r.id, type: r.type, genMode: r.genMode, prompt: r.prompt, aspect: r.aspect,
+    id: r.id, type: r.type, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
     count: r.count, duration: r.duration, resolution: r.resolution,
-    items: r.items, upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
+    items: r.items, inputs: r.inputs || [], upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
     slots: r.slots ? r.slots.map((s) => ({ status: s.status, error: s.error })) : undefined,
   };
 }
@@ -213,7 +218,7 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   if (!u) return res.status(404).json({ error: "No such user." });
   if (u.id === req.user.id) return res.status(400).json({ error: "You can't delete your own admin account." });
   for (const [t, s] of Object.entries(db.sessions)) if (s.userId === u.id) delete db.sessions[t];
-  for (const [fid, f] of Object.entries(db.feed)) if (f.userId === u.id) { (f.items || []).forEach(delMediaUrl); delete db.feed[fid]; }
+  for (const [fid, f] of Object.entries(db.feed)) if (f.userId === u.id) { (f.items || []).forEach(delMediaUrl); (f.inputs || []).forEach(delMediaUrl); delete db.feed[fid]; }
   delete db.users[u.id];
   saveDb();
   res.json({ ok: true });
@@ -247,7 +252,7 @@ app.get("/api/feed", requireAuth, (req, res) => {
 app.delete("/api/feed/:id", requireAuth, (req, res) => {
   const r = db.feed[req.params.id];
   if (!r || r.userId !== req.user.id) return res.status(404).json({ error: "No such item." });
-  (r.items || []).forEach(delMediaUrl);
+  (r.items || []).forEach(delMediaUrl); (r.inputs || []).forEach(delMediaUrl);
   delete db.feed[req.params.id];
   saveDb();
   res.json({ ok: true });
@@ -263,7 +268,8 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
     if (u.credits < IMAGE_COST * n) return res.status(402).json({ error: `Not enough credits — this needs ${IMAGE_COST * n}, you have ${u.credits}.` });
 
-    const refParts = (references || []).map(toInlineImage).filter(Boolean).slice(0, 5);
+    const refData = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 5);
+    const refParts = refData.map(toInlineImage).filter(Boolean);
     const contents = refParts.length ? [{ role: "user", parts: [{ text: prompt }, ...refParts] }] : prompt;
     const jobs = Array.from({ length: n }, () => ai.models.generateContent({ model: IMAGE_MODEL, contents, config: { imageConfig: { aspectRatio } } }));
     const results = await Promise.all(jobs);
@@ -279,7 +285,8 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
     }
     if (!items.length) return res.status(502).json({ error: "The model returned no image (it may have been safety-filtered). Try a different prompt." });
     charge(u, IMAGE_COST * items.length);
-    const r = { id: rid(), userId: u.id, type: "image", genMode: null, prompt, aspect: aspectRatio, count: items.length, items, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
+    const inputs = refData.map((d) => saveInputUrl(d, u.id)).filter(Boolean);
+    const r = { id: rid(), userId: u.id, type: "image", genMode: null, prompt, aspect: aspectRatio, count: items.length, items, inputs, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
     db.feed[r.id] = r; saveDb();
     res.json({ record: clientRecord(r), credits: u.credits });
   } catch (err) {
@@ -332,14 +339,16 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
   try {
-    const { mode = "video", prompt, aspectRatio = "16:9", duration = 8, negativePrompt = "", resolution = "1080p", frames = [], references = [], count = 1 } = req.body || {};
+    const { mode = "video", prompt, aspectRatio = "16:9", duration = 8, negativePrompt = "", resolution = "1080p", frames = [], references = [], count = 1, model = "fast" } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
-    if (u.credits < VIDEO_COST * n) return res.status(402).json({ error: `Not enough credits — this needs ${VIDEO_COST * n}, you have ${u.credits}.` });
+    const modelKey = model === "lite" ? "lite" : "fast";
+    const perClip = VIDEO_COST[modelKey];
+    if (u.credits < perClip * n) return res.status(402).json({ error: `Not enough credits — this needs ${perClip * n}, you have ${u.credits}.` });
 
     const config = { aspectRatio: aspectRatio === "9:16" ? "9:16" : "16:9", resolution, durationSeconds: Math.max(4, Math.min(Number(duration) || 8, 8)) };
     if (negativePrompt && negativePrompt.trim()) config.negativePrompt = negativePrompt.trim();
-    const params = { model: VIDEO_MODEL, prompt };
+    const params = { model: VIDEO_MODELS[modelKey], prompt };
     if (mode === "frames") {
       const first = toImage(frames[0]);
       if (!first) return res.status(400).json({ error: "Image → Video needs an input image." });
@@ -356,8 +365,11 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
     }
     params.config = config;
 
-    charge(u, VIDEO_COST * n); // reserve up-front; refunded per failed clip
-    const r = { id: rid(), userId: u.id, type: "video", genMode: mode, prompt, aspect: config.aspectRatio, count: n, duration: config.durationSeconds, resolution, items: new Array(n).fill(null), slots: [], status: "generating", createdAt: Date.now() };
+    let inputUrls = [];
+    if (mode === "frames") inputUrls = (frames || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 2).map((d) => saveInputUrl(d, u.id)).filter(Boolean);
+    else if (mode === "ingredients") inputUrls = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 3).map((d) => saveInputUrl(d, u.id)).filter(Boolean);
+    charge(u, perClip * n); // reserve up-front; refunded per failed clip
+    const r = { id: rid(), userId: u.id, type: "video", genMode: mode, prompt, neg: (negativePrompt && negativePrompt.trim()) || "", aspect: config.aspectRatio, count: n, duration: config.durationSeconds, resolution, model: modelKey, perClip, items: new Array(n).fill(null), inputs: inputUrls, slots: [], status: "generating", createdAt: Date.now() };
     for (let k = 0; k < n; k++) r.slots.push({ status: "generating", error: null, jobKey: null });
     db.feed[r.id] = r; saveDb();
 
@@ -371,7 +383,7 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
           saveDb();
         } catch (err) {
           slot.status = "error"; slot.error = err?.message || "Failed to start.";
-          refund(u, VIDEO_COST);
+          refund(u, perClip);
           if (r.slots.every((s) => s.status !== "generating")) r.status = r.slots.every((s) => s.status === "error") ? "error" : "done";
           saveDb();
         }
@@ -389,28 +401,26 @@ app.get("/api/video-status", requireAuth, async (req, res) => {
   const r = db.feed[req.query.recordId];
   if (!r || r.userId !== u.id) return res.status(404).json({ error: "No such record." });
   if (r.type !== "video") return res.status(400).json({ error: "Not a video record." });
-  for (let i = 0; i < r.slots.length; i++) {
-    const slot = r.slots[i];
-    if (slot.status !== "generating") continue;
-    if (!slot.jobKey) continue; // not started yet
+  const perClip = r.perClip || 10;
+  // Poll + download every slot concurrently so clips that finish together appear together.
+  await Promise.all(r.slots.map(async (slot, i) => {
+    if (slot.status !== "generating" || !slot.jobKey) return;
     const mem = videoOps.get(slot.jobKey);
-    if (!mem) { slot.status = "error"; slot.error = "Interrupted by a server restart (credit refunded)."; refund(u, VIDEO_COST); saveDb(); continue; }
+    if (!mem) { slot.status = "error"; slot.error = "Interrupted by a server restart (credit refunded)."; refund(u, perClip); return; }
     try {
       const updated = await ai.operations.getVideosOperation({ operation: mem.op });
       mem.op = updated;
-      if (updated?.done) {
-        const uri = updated?.response?.generatedVideos?.[0]?.video?.uri;
-        videoOps.delete(slot.jobKey);
-        if (!uri) { slot.status = "error"; slot.error = "Blocked by safety filters (you were refunded)."; refund(u, VIDEO_COST); saveDb(); continue; }
-        const up = await fetch(uri, { headers: { "x-goog-api-key": API_KEY }, redirect: "follow" });
-        if (!up.ok || !up.body) { slot.status = "error"; slot.error = "Could not fetch the finished video."; refund(u, VIDEO_COST); saveDb(); continue; }
-        const ab = await up.arrayBuffer();
-        r.items[i] = saveMedia(Buffer.from(ab), "mp4", u.id);
-        slot.status = "done";
-        saveDb();
-      }
+      if (!updated?.done) return;
+      const uri = updated?.response?.generatedVideos?.[0]?.video?.uri;
+      videoOps.delete(slot.jobKey);
+      if (!uri) { slot.status = "error"; slot.error = "Blocked by safety filters (you were refunded)."; refund(u, perClip); return; }
+      const up = await fetch(uri, { headers: { "x-goog-api-key": API_KEY }, redirect: "follow" });
+      if (!up.ok || !up.body) { slot.status = "error"; slot.error = "Could not fetch the finished video."; refund(u, perClip); return; }
+      const ab = await up.arrayBuffer();
+      r.items[i] = saveMedia(Buffer.from(ab), "mp4", u.id);
+      slot.status = "done";
     } catch (err) { /* transient — keep polling */ }
-  }
+  }));
   if (r.slots.every((s) => s.status !== "generating")) r.status = r.slots.every((s) => s.status === "error") ? "error" : "done";
   saveDb();
   res.json({ record: clientRecord(r), credits: u.credits });

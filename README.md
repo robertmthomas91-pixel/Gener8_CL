@@ -63,7 +63,7 @@ npm start                   # http://localhost:3000
 
 - `POST /api/generate-image` `{ prompt, count, aspectRatio, references }` → runs up to 4 Nano Banana Pro calls, **saves** the images to `DATA_DIR`, charges credits, and returns a feed `record` (with `/media/...` URLs) + the new `credits` balance. `references` is up to 5 image data-URLs used as context.
 - `POST /api/upscale-image` `{ recordId, idx }` → re-renders that feed item at **4K**, replaces it, charges 2 credits.
-- `POST /api/generate-video` `{ mode, prompt, aspectRatio, duration, negativePrompt, resolution, frames, references, count }` → reserves `10 × count` credits and starts up to 4 Veo 3.1 Fast jobs grouped into one feed `record`; returns the record. `mode` is one of:
+- `POST /api/generate-video` `{ mode, prompt, aspectRatio, duration, negativePrompt, resolution, frames, references, count, model }` (`model` is `fast` or `lite`) → reserves `10 × count` credits and starts up to 4 Veo 3.1 Fast jobs grouped into one feed `record`; returns the record. `mode` is one of:
   - `video` — text → video.
   - `frames` — image → video: `frames[0]` is the input/first frame, optional `frames[1]` is the last frame. Sent as the `image` + `config.lastFrame`.
   - `ingredients` — up to 3 reference images that preserve a subject/character/product. Forces 8s.
@@ -79,7 +79,7 @@ Video jobs are tracked in memory, which is fine for a single Railway instance. I
 ## Accounts, credits & persistence
 
 - **Accounts are admin-managed.** The first admin is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first run. Sign in, click **Admin**, and add/remove users, set their passwords, and assign credits. There is no public sign-up.
-- **Credits.** Every account starts each month with **20,000 credits**. Generation costs **2 credits per image** and **10 credits per video** (so 4 images = 8, 4 videos = 40). A 4K upscale costs another 2. Balances **reset to 20,000 on the 1st of each month**; the admin can top up or set any balance at any time.
+- **Credits.** Every account starts each month with **20,000 credits**. Images cost **2 credits each**. Video is priced per clip by model — **20 credits on Veo 3.1 Fast** or **10 on Veo 3.1 Lite** (choose the model in the video controls; e.g. 4 Fast clips = 80, 4 Lite = 40). A 4K image upscale costs 2. Balances **reset to 20,000 on the 1st of each month**; the admin can top up or set any balance at any time.
 - **Persistent feed.** Generated images and videos are saved on the server (under `DATA_DIR`) and reload from `/api/feed`, so your feed survives page refreshes and redeploys. Each item is private to its owner (and the admin). Hover an item to **delete** it from the feed.
 - **Security notes.** Passwords are hashed (scrypt) and never stored in plain text; sessions are http-only cookies. This is a straightforward auth system, not a security-audited product — use HTTPS (Railway provides it), set a strong `ADMIN_PASSWORD`, and rotate it if needed.
 
@@ -90,7 +90,7 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
 | Tab | Sub-mode | Model | Inputs |
 |---|---|---|---|
 | **Image** | — | Nano Banana Pro | prompt **+ up to 5 reference images** → up to 4 images |
-| **Video** | Text → Video | Veo 3.1 Fast | prompt → up to 4 videos |
+| **Video** | Text → Video | Veo 3.1 **Fast or Lite** | prompt → up to 4 videos |
 | **Video** | Image → Video | Veo 3.1 Fast | an input image (+ optional end frame) + prompt → up to 4 videos |
 | **Video** | Ingredients | Veo 3.1 Fast | up to 3 reference images + prompt → up to 4 videos (always 8s) |
 

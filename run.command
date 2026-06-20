@@ -14,5 +14,5 @@ if [ -z "$GEMINI_API_KEY" ]; then
   echo ""
 fi
 if [ ! -d node_modules ]; then echo "▶ Installing dependencies…"; npm install; else echo "▶ Dependencies already installed."; fi
-echo "▶ Starting GENER8… open http://localhost:3000 and sign in as admin (see server output for the password if you didn't set one)."
+echo "▶ Starting GENER8… open http://localhost:3000 and sign in as admin."
 exec npm start

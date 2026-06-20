@@ -173,9 +173,16 @@
             Video
           </button>
         </div>
-        <div class="pill" style="color:var(--text-dim);font-weight:600;cursor:default">
-          <span style="width:7px;height:7px;border-radius:999px;background:var(--accent)"></span>
-          <span id="modelName">Nano Banana Pro</span>
+        <div style="position:relative">
+          <button class="pill" id="modelPill" type="button" style="font-weight:600;cursor:default;border:1px solid var(--border)">
+            <span style="width:7px;height:7px;border-radius:999px;background:var(--accent)"></span>
+            <span id="modelName">Nano Banana Pro</span>
+            <span id="modelChevron" style="display:none;color:var(--text-faint)">&#9662;</span>
+          </button>
+          <div id="modelMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:60;min-width:215px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:11px;box-shadow:var(--shadow-lg);overflow:hidden">
+            <button type="button" class="modelOpt" data-vmodel="fast" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:pointer">Veo 3.1 Fast <span style="color:var(--text-faint);font-weight:500">20 cr/clip</span></button>
+            <button type="button" class="modelOpt" data-vmodel="lite" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;border-top:1px solid var(--border)">Veo 3.1 Lite <span style="color:var(--text-faint);font-weight:500">10 cr/clip</span></button>
+          </div>
         </div>
       </div>
 
@@ -271,7 +278,7 @@
 
 <script>
 (function(){
-  var state = { mode:'image', videoMode:'video', count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  var state = { mode:'image', videoMode:'video', videoModel:'fast', count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'image' ? 'image' : state.videoMode; }
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
   var VID_ASPECTS = ['16:9','9:16'];
@@ -390,7 +397,12 @@
     document.getElementById('durationWrap').style.display = 'none'; // no duration choice at 1080p
     document.getElementById('countWrap').style.display = '';
     document.getElementById('videoModes').style.display = state.mode === 'video' ? '' : 'none';
-    document.getElementById('modelName').textContent = isImage ? 'Nano Banana Pro' : 'Veo 3.1 Fast · 1080p · 8s';
+    var isVid = !isImage;
+    document.getElementById('modelName').textContent = isImage ? 'Nano Banana Pro' : ((state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · 1080p · ' + (state.videoModel === 'lite' ? 10 : 20) + ' cr');
+    document.getElementById('modelChevron').style.display = isVid ? '' : 'none';
+    document.getElementById('modelPill').style.cursor = isVid ? 'pointer' : 'default';
+    if (!isVid) document.getElementById('modelMenu').style.display = 'none';
+    [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ b.style.background = (b.getAttribute('data-vmodel') === state.videoModel) ? 'var(--accent-soft)' : 'transparent'; });
     [].forEach.call(document.querySelectorAll('#videoModeTabs .tab'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-vmode') === state.videoMode)); });
     var placeholders = {
       image: 'Describe the image you want — subject, style, lighting, composition, mood, colour…',
@@ -422,6 +434,9 @@
     state.advanced = !state.advanced;
     document.getElementById('advanced').style.display = state.advanced ? '' : 'none';
   };
+  document.getElementById('modelPill').onclick = function(e){ if (effMode() === 'image') return; e.stopPropagation(); var mm = document.getElementById('modelMenu'); mm.style.display = (mm.style.display === 'none' || !mm.style.display) ? 'block' : 'none'; };
+  [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ b.onclick = function(e){ e.stopPropagation(); state.videoModel = b.getAttribute('data-vmodel'); document.getElementById('modelMenu').style.display = 'none'; renderControls(); }; });
+  document.addEventListener('click', function(e){ var mm = document.getElementById('modelMenu'); if (mm && mm.style.display !== 'none' && !e.target.closest('#modelMenu') && !e.target.closest('#modelPill')) mm.style.display = 'none'; });
 
   function showBanner(msg){ bannerEl.textContent = msg; bannerEl.classList.add('show'); }
   function hideBanner(){ bannerEl.classList.remove('show'); }
@@ -433,7 +448,7 @@
   function showLogin(show){ document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none'; }
   function timeAgo(ts){ if(!ts) return 'just now'; var sec=Math.floor((Date.now()-ts)/1000); if(sec<60) return 'just now'; var m=Math.floor(sec/60); if(m<60) return m+' min ago'; var h=Math.floor(m/60); if(h<24) return h+'h ago'; return Math.floor(h/24)+'d ago'; }
   function recordToGen(rec){
-    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, items: (rec.items||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
+    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
     if (rec.slots){ g.slots = rec.slots.map(function(sl,i){ return { status: sl.status, error: sl.error, url: (rec.items&&rec.items[i])||null, progress: sl.status==='done'?100:(sl.status==='error'?0:8) }; }); }
     return g;
   }
@@ -516,11 +531,11 @@
     media += '</div>';
 
     var meta = '<aside class="meta">';
-    meta += '<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;color:var(--text-faint)">'+gen.when+'</span>'+((gen.status!=='generating' && String(gen.id).indexOf('tmp-')!==0) ? '<button class="btn-ghost" data-del="'+gen.id+'" title="Remove from feed" style="padding:3px 8px;font-size:14px;line-height:1">\u00d7</button>' : '')+'</div>';
+    meta += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:var(--text-faint)">'+gen.when+'</span>'+((gen.status!=='generating' && String(gen.id).indexOf('tmp-')!==0) ? '<span style="display:flex;gap:6px"><button class="btn-ghost" data-reuse="'+gen.id+'" title="Reuse this prompt and its images" style="padding:3px 9px;font-size:12px">Reuse</button><button class="btn-ghost" data-del="'+gen.id+'" title="Remove from feed" style="padding:3px 8px;font-size:14px;line-height:1">\u00d7</button></span>' : '')+'</div>';
     meta += '<p style="margin:0;font-size:14px;line-height:1.5;color:var(--text)">'+escapeHtml(gen.prompt)+'</p>';
     meta += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
     meta += '<span class="tag">'+gen.aspect+'</span>';
-    meta += '<span class="tag">'+(gen.type==='video' ? ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · Veo 3.1 Fast') : (gen.count+' image'+(gen.count>1?'s':'')+' · Nano Banana Pro'))+'</span>';
+    meta += '<span class="tag">'+(gen.type==='video' ? ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · '+(gen.model==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')) : (gen.count+' image'+(gen.count>1?'s':'')+' · Nano Banana Pro'))+'</span>';
     if (gen.type==='video'){ meta += '<span class="tag">'+({video:'Text→Video',frames:'Frames→Video',ingredients:'Ingredients→Video'}[gen.genMode||'video'])+'</span>'; }
     meta += '</div>';
 
@@ -549,6 +564,7 @@
     var retry = card.querySelector('[data-retry]');
     if (retry) retry.onclick = function(){ runGeneration({ prompt: gen.prompt, type: gen.type, genMode: gen.genMode, count: gen.count, aspect: gen.aspect, duration: gen.duration, neg: gen.neg, imageRefs: gen.imageRefs, frames: gen.frames, references: gen.references }); };
     var del = card.querySelector('[data-del]'); if (del) del.onclick = function(){ deleteCard(gen); };
+    var ru = card.querySelector('[data-reuse]'); if (ru) ru.onclick = function(){ reuseGeneration(gen); };
     wireItemTools(card, gen);
   }
   function updateCard(gen){ var c = document.getElementById('gen-' + gen.id); if (c) renderCard(c, gen); }
@@ -631,8 +647,44 @@
   document.getElementById('lightbox').onclick = function(e){ if (e.target === this) closeLightbox(); };
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && document.getElementById('lightbox').style.display === 'flex') closeLightbox(); });
 
+  // ---- prompt reuse & input clearing ----
+  function clearInputs(){
+    document.getElementById('prompt').value = '';
+    var np = document.getElementById('negPrompt'); if (np) np.value = '';
+    state.imageRefs = []; state.frameImages = []; state.refImages = [];
+    renderControls();
+  }
+  function restoreInputs(snap){
+    if (!snap) return;
+    document.getElementById('prompt').value = snap.prompt || '';
+    var np = document.getElementById('negPrompt'); if (np) np.value = snap.neg || '';
+    state.mode = snap.mode; state.videoMode = snap.videoMode;
+    state.imageRefs = snap.imageRefs || []; state.frameImages = snap.frameImages || []; state.refImages = snap.refImages || [];
+    [].forEach.call(document.querySelectorAll('.tab[data-mode]'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-mode') === state.mode)); });
+    renderControls();
+  }
+  function reuseGeneration(gen){
+    document.getElementById('prompt').value = gen.prompt || '';
+    if (gen.type === 'image'){ state.mode = 'image'; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; }
+    var np = document.getElementById('negPrompt'); if (np) np.value = gen.neg || '';
+    if (gen.neg){ state.advanced = true; var adv = document.getElementById('advanced'); if (adv) adv.style.display = ''; }
+    state.imageRefs = []; state.frameImages = []; state.refImages = [];
+    var inputs = (gen.inputs || []).slice();
+    Promise.all(inputs.map(toDataURL)).then(function(ds){
+      ds = ds.filter(Boolean);
+      if (gen.type === 'image') state.imageRefs = ds.slice(0,5);
+      else if (gen.genMode === 'frames'){ state.frameImages[0] = ds[0] || null; if (ds[1]) state.frameImages[1] = ds[1]; }
+      else if (gen.genMode === 'ingredients') state.refImages = ds.slice(0,3);
+      [].forEach.call(document.querySelectorAll('.tab[data-mode]'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-mode') === state.mode)); });
+      renderControls();
+      try { window.scrollTo({ top:0, behavior:'smooth' }); } catch(e){}
+      document.getElementById('prompt').focus();
+      showBanner('Loaded the prompt'+(ds.length ? ' and '+ds.length+' image'+(ds.length>1?'s':'') : '')+' — tweak it and hit Generate.');
+    });
+  }
+
   // ---- generation ----
-  function runGeneration(cfg){
+  function runGeneration(cfg, snap){
     hideBanner();
     emptyEl.style.display = 'none';
     if (cfg.type === 'image'){
@@ -642,13 +694,13 @@
         body: JSON.stringify({ prompt: cfg.prompt, count: cfg.count, aspectRatio: cfg.aspect, references: cfg.imageRefs || [] }) })
       .then(handleJson)
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); tcard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
-      .catch(function(err){ tmp.status='error'; tmp.error = err.message; updateCard(tmp); if(/credit/i.test(err.message)) showBanner(err.message); });
+      .catch(function(err){ tcard.remove(); restoreInputs(snap); showBanner(err.message); });
     } else {
       fetch('/api/generate-video', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, duration: cfg.duration, negativePrompt: cfg.neg, resolution: cfg.resolution || '1080p', frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
+        body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, duration: cfg.duration, negativePrompt: cfg.neg, resolution: cfg.resolution || '1080p', model: cfg.model || 'fast', frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
       .then(handleJson)
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); var g = recordToGen(d.record); feedEl.insertBefore(makeCard(g), feedEl.firstChild); pollRecord(g); })
-      .catch(function(err){ showBanner(err.message); });
+      .catch(function(err){ restoreInputs(snap); showBanner(err.message); });
     }
   }
   function pollRecord(gen){
@@ -673,18 +725,21 @@
     var refs = state.refImages.filter(Boolean);
     if (m === 'frames' && !state.frameImages[0]){ showBanner('Add an input image to animate.'); return; }
     if (m === 'ingredients' && !refs.length){ showBanner('Add at least one reference image.'); return; }
+    var negVal = document.getElementById('negPrompt').value.trim();
+    var snap = { prompt: prompt, neg: negVal, mode: state.mode, videoMode: state.videoMode, imageRefs: state.imageRefs.slice(), frameImages: state.frameImages.slice(), refImages: state.refImages.slice() };
     runGeneration({
       prompt: prompt,
       type: state.mode === 'image' ? 'image' : 'video',
       genMode: state.mode === 'image' ? null : state.videoMode,
-      count: state.count, aspect: state.aspect,
+      count: state.count, aspect: state.aspect, model: state.videoModel,
       duration: 8, // Veo generates 1080p as a fixed 8-second clip
       resolution: state.mode === 'image' ? null : '1080p',
-      neg: document.getElementById('negPrompt').value.trim(),
+      neg: negVal,
       imageRefs: m === 'image' ? state.imageRefs.filter(Boolean) : [],
       frames: m === 'frames' ? [state.frameImages[0], state.frameImages[1]].filter(Boolean) : [],
       references: m === 'ingredients' ? refs : []
-    });
+    }, snap);
+    clearInputs();
   };
 })();
 </script>
