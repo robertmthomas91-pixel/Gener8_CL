@@ -2,7 +2,7 @@
 
 A multi-user web app for generating **images, video, voiceover, and music**:
 
-- **Images** — Nano Banana Pro (`gemini-3-pro-image-preview`)
+- **Images** — Nano Banana 2 (`gemini-2.5-flash-image`, default) or Nano Banana Pro (`gemini-3-pro-image-preview`)
 - **Video** — Veo 3.1 Fast/Lite (`veo-3.1-fast-generate-preview` / `veo-3.1-lite-generate-preview`)
 - **Voiceover** — ElevenLabs text-to-speech (`eleven_multilingual_v2`)
 - **Music** — ElevenLabs Music
@@ -100,7 +100,7 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
 
 | Tab | Sub-mode | Model | Inputs |
 |---|---|---|---|
-| **Image** | — | Nano Banana Pro | prompt **+ up to 5 reference images** → up to 4 images |
+| **Image** | — | Nano Banana 2 (default) / Pro | prompt **+ up to 5 reference images** → up to 4 images |
 | **Video** | Text → Video | Veo 3.1 **Fast or Lite** | prompt → up to 4 videos |
 | **Video** | Image → Video | Veo 3.1 Fast | an input image (+ optional end frame) + prompt → up to 4 videos |
 | **Video** | Ingredients | Veo 3.1 Fast | up to 3 reference images + prompt → up to 4 videos (always 8s) |

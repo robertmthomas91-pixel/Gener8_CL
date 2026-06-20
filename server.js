@@ -25,7 +25,8 @@ const DB_FILE = path.join(DATA_DIR, "db.json");
 // Admin-editable pricing & limits (stored in the DB, tunable from the Admin panel)
 const DEFAULT_SETTINGS = {
   startCredits: 20000,   // monthly credit grant per user
-  imageCost: 2,          // credits per generated image
+  imageCost: 2,          // credits per Nano Banana 2 image
+  imageProCost: 4,       // credits per Nano Banana Pro image
   upscaleCost: 4,        // credits per 4K image upscale
   videoLite: 10,         // base (720p) credits per Veo Lite clip
   videoFast: 20,         // base (720p) credits per Veo Fast clip
@@ -35,7 +36,8 @@ const DEFAULT_SETTINGS = {
   retentionDays: Number(process.env.RETENTION_DAYS) || 30, // days before auto-delete
 };
 
-const IMAGE_MODEL = "gemini-3-pro-image-preview";   // Nano Banana Pro
+const IMAGE_MODELS = { std: "gemini-2.5-flash-image", pro: "gemini-3-pro-image-preview" }; // Nano Banana 2 (default) / Nano Banana Pro
+const IMAGE_MODEL = IMAGE_MODELS.pro;   // Pro is used for 4K upscales
 const VIDEO_MODELS = { fast: "veo-3.1-fast-generate-preview", lite: "veo-3.1-lite-generate-preview" };
 const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;               // ElevenLabs voiceover + music
 const ELEVEN_TTS_MODEL = "eleven_multilingual_v2";
@@ -223,7 +225,7 @@ function pruneExpired() {
 }
 function clientRecord(r) {
   return {
-    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, voiceName: r.voiceName || null, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
+    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, voiceName: r.voiceName || null, genMode: r.genMode, imodel: r.imodel || null, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
     count: r.count, duration: r.duration, resolution: r.resolution,
     items: r.items, inputs: r.inputs || [], upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
     slots: r.slots ? r.slots.map((s) => ({ status: s.status, error: s.error })) : undefined,
@@ -386,11 +388,11 @@ app.post("/api/admin/users/:id/credits", requireAdmin, (req, res) => {
 
 function pricingPublic() {
   const s = db.settings;
-  return { startCredits: s.startCredits, imageCost: s.imageCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, voCost: s.voCost, musicCost: s.musicCost, retentionDays: s.retentionDays };
+  return { startCredits: s.startCredits, imageCost: s.imageCost, imageProCost: s.imageProCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, voCost: s.voCost, musicCost: s.musicCost, retentionDays: s.retentionDays };
 }
 app.get("/api/admin/settings", requireAdmin, (req, res) => res.json({ settings: db.settings }));
 app.post("/api/admin/settings", requireAdmin, (req, res) => {
-  const allowed = ["startCredits", "imageCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "voCost", "musicCost", "retentionDays"];
+  const allowed = ["startCredits", "imageCost", "imageProCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "voCost", "musicCost", "retentionDays"];
   const b = req.body || {};
   for (const k of allowed) {
     if (b[k] == null || !Number.isFinite(+b[k])) continue;
@@ -433,15 +435,17 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
   try {
-    const { prompt, count = 1, aspectRatio = "1:1", references = [] } = req.body || {};
+    const { prompt, count = 1, aspectRatio = "1:1", references = [], model = "std" } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
-    if (u.credits < db.settings.imageCost * n) return res.status(402).json({ error: `Not enough credits — this needs ${db.settings.imageCost * n}, you have ${u.credits}.` });
+    const imodel = model === "pro" ? "pro" : "std";
+    const perImage = imodel === "pro" ? db.settings.imageProCost : db.settings.imageCost;
+    if (u.credits < perImage * n) return res.status(402).json({ error: `Not enough credits — this needs ${perImage * n}, you have ${u.credits}.` });
 
     const refData = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 5);
     const refParts = refData.map(toInlineImage).filter(Boolean);
     const contents = refParts.length ? [{ role: "user", parts: [{ text: prompt }, ...refParts] }] : prompt;
-    const jobs = Array.from({ length: n }, () => ai.models.generateContent({ model: IMAGE_MODEL, contents, config: { imageConfig: { aspectRatio } } }));
+    const jobs = Array.from({ length: n }, () => ai.models.generateContent({ model: IMAGE_MODELS[imodel], contents, config: { imageConfig: { aspectRatio } } }));
     const results = await Promise.all(jobs);
     const items = [];
     for (const r of results) {
@@ -454,9 +458,9 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
       }
     }
     if (!items.length) return res.status(502).json({ error: "The model returned no image (it may have been safety-filtered). Try a different prompt." });
-    charge(u, db.settings.imageCost * items.length);
+    charge(u, perImage * items.length);
     const inputs = refData.map((d) => saveInputUrl(d, u.id)).filter(Boolean);
-    const r = { id: rid(), userId: u.id, type: "image", genMode: null, prompt, aspect: aspectRatio, count: items.length, items, inputs, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
+    const r = { id: rid(), userId: u.id, type: "image", genMode: null, imodel, prompt, aspect: aspectRatio, count: items.length, items, inputs, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
     db.feed[r.id] = r; saveDb();
     res.json({ record: clientRecord(r), credits: u.credits });
   } catch (err) {
