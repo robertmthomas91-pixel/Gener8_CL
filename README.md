@@ -127,3 +127,14 @@ Video defaults to **Veo 3.1 Lite at 720p** (the cheapest combination); switch th
 - Image reference/upscale features depend on Nano Banana Pro accepting image inputs and 4K output on your account/tier.
 - All Google-generated media carries an invisible **SynthID** watermark.
 - Costs are billed to your Google account per image / per second of video — keep the output counts low while testing.
+
+
+## Security & operations (short-term hardening)
+
+- **Atomic credits.** Credits are reserved before each generation and refunded automatically if it fails, so concurrent generations can no longer double-spend or corrupt the balance.
+- **Local backups.** The database is snapshotted to `DATA_DIR/backups` at startup and every 6 hours (last 28 kept). Admins can also download a backup any time from **Admin → Download backup**. (Media files live on the volume; the backup covers accounts, credits and the feed index.)
+- **Login hardening.** Session cookies are marked `Secure` behind HTTPS, login and generation endpoints are rate-limited, and an account is locked for 15 minutes after 5 failed logins.
+- **Admin password reset.** Admins can set a new temporary password for any user (which signs that user out everywhere).
+- **Usage & cost.** Admin → User management shows each user's monthly usage and an estimated $ spend; users see a low-credit warning.
+- **Voice slots.** Added ElevenLabs library voices are capped (LRU) and old ones auto-deleted so the account voice limit isn't exhausted.
+- **Legal templates.** `/terms.html`, `/privacy.html`, `/data-handling.html` are starter templates linked from the sign-in screen — have a lawyer review them before relying on them.

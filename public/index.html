@@ -141,7 +141,7 @@
       </div>
       <div style="display:flex;align-items:center;gap:12px">
         <div class="pill" id="creditPill" title="Credits remaining" style="font-weight:700">
-          <span style="width:7px;height:7px;border-radius:999px;background:var(--accent)"></span> <span id="creditLabel">—</span>
+          <span id="creditDot" style="width:7px;height:7px;border-radius:999px;background:var(--accent)"></span> <span id="creditLabel">—</span>
         </div>
         <div class="seg" id="themeSeg">
           <div class="knob" id="knob"></div>
@@ -280,6 +280,11 @@
         <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 13px;margin-bottom:14px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;outline:none" />
         <button class="btn-primary" type="submit" style="width:100%;justify-content:center">Sign in</button>
         <div id="loginErr" style="color:var(--danger);font-size:12.5px;margin-top:10px;min-height:16px"></div>
+        <div style="margin-top:14px;font-size:11.5px;color:var(--text-faint);text-align:center">
+          <a href="/terms.html" target="_blank" style="color:var(--text-faint)">Terms</a> ·
+          <a href="/privacy.html" target="_blank" style="color:var(--text-faint)">Privacy</a> ·
+          <a href="/data-handling.html" target="_blank" style="color:var(--text-faint)">Data handling</a>
+        </div>
       </form>
     </div>
   </div>
@@ -288,7 +293,7 @@
     <div class="panel" style="width:100%;max-width:640px;padding:22px;background:var(--surface-2)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--text)">User management</div>
-        <button id="adminClose" class="btn-ghost" style="padding:6px 10px">Close</button>
+        <div style="display:flex;gap:8px"><button id="adminBackup" class="btn-ghost" style="padding:6px 10px">Download backup</button><button id="adminClose" class="btn-ghost" style="padding:6px 10px">Close</button></div>
       </div>
       <div id="adminUsers" style="margin:10px 0 18px;color:var(--text-dim);font-size:13px">Loading…</div>
       <div style="border-top:1px solid var(--border);padding-top:16px">
@@ -326,6 +331,7 @@
   var state = { mode:'image', imageModel:'std', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
   var PRICING = { startCredits:20000, imageCost:2, imageProCost:4, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
+  var creditWarned = false;
   function modelOptHtml(attr, key, label, costLabel, top, disabled){ return '<button type="button" class="modelOpt"'+(disabled?' data-disabled="1"':'')+' data-'+attr+'="'+key+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:'+(disabled?'not-allowed':'pointer')+(disabled?';opacity:0.45':'')+(top?';border-top:1px solid var(--border)':'')+'">'+label+' <span style="color:var(--text-faint);font-weight:500">'+costLabel+'</span></button>'; }
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
   var VID_ASPECTS = ['16:9','9:16'];
@@ -518,7 +524,17 @@
 
   // ---- auth, account, admin, persisted feed ----
   var ME = null;
-  function setCredits(n){ var el = document.getElementById('creditLabel'); if (el && n != null) el.textContent = Number(n).toLocaleString() + ' credits'; }
+  function setCredits(n){
+    var el = document.getElementById('creditLabel'); if (el && n != null) el.textContent = Number(n).toLocaleString() + ' credits';
+    if (n == null) return;
+    var low = Math.max(Number(PRICING.videoFast)||20, Math.round((Number(PRICING.startCredits)||20000) * 0.05));
+    var dot = document.getElementById('creditDot'); var pill = document.getElementById('creditPill');
+    var isLow = n <= low;
+    if (dot) dot.style.background = isLow ? 'var(--danger)' : 'var(--accent)';
+    if (pill){ pill.style.color = isLow ? 'var(--danger)' : ''; pill.title = isLow ? 'Running low on credits — ask your admin for a top-up' : 'Credits remaining'; }
+    if (isLow && !creditWarned){ creditWarned = true; showBanner('You\'re running low on credits ('+Number(n).toLocaleString()+' left). Ask your admin for a top-up to keep generating.'); }
+    if (!isLow) creditWarned = false;
+  }
   function setAuthUI(u){ if(!u) return; ME = u; document.getElementById('userEmail').textContent = u.email; setCredits(u.credits); document.getElementById('adminBtn').style.display = u.role === 'admin' ? '' : 'none'; }
   function showLogin(show){ document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none'; }
   function timeAgo(ts){ if(!ts) return 'just now'; var sec=Math.floor((Date.now()-ts)/1000); if(sec<60) return 'just now'; var m=Math.floor(sec/60); if(m<60) return m+' min ago'; var h=Math.floor(m/60); if(h<24) return h+'h ago'; return Math.floor(h/24)+'d ago'; }
@@ -543,16 +559,21 @@
   function renderAdminUsers(){
     fetch('/api/admin/users').then(handleJson).then(function(d){
       var rows = d.users.map(function(u){
+        var g = u.usage || {images:0,videos:0,vo:0,music:0,usd:0};
+        var usage = g.images+' img · '+g.videos+' vid · '+(g.vo+g.music)+' aud · ~$'+(Number(g.usd||0).toFixed(2));
         return '<tr style="border-top:1px solid var(--border)">'
           + '<td style="padding:8px 6px;color:var(--text)">'+escapeHtml(u.email)+(u.role==='admin'?' <span class="tag" style="font-size:10px">admin</span>':'')+'</td>'
           + '<td style="padding:8px 6px;text-align:right;color:var(--text)">'+Number(u.credits).toLocaleString()+'</td>'
+          + '<td style="padding:8px 6px;text-align:right;color:var(--text-dim);font-size:11.5px;white-space:nowrap">'+usage+'</td>'
           + '<td style="padding:8px 6px;text-align:right;white-space:nowrap">'
             + '<button class="btn-ghost" data-addc="'+u.id+'" style="padding:4px 8px">+ credits</button> '
             + '<button class="btn-ghost" data-setc="'+u.id+'" style="padding:4px 8px">set</button> '
+            + '<button class="btn-ghost" data-pw="'+u.id+'" style="padding:4px 8px">reset pw</button> '
             + (u.role==='admin'?'':'<button class="btn-ghost" data-delu="'+u.id+'" style="padding:4px 8px;color:var(--danger)">remove</button>')
           + '</td></tr>';
       }).join('');
-      document.getElementById('adminUsers').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="color:var(--text-faint);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:4px 6px">User</th><th style="text-align:right;padding:4px 6px">Credits</th><th style="text-align:right;padding:4px 6px">Actions</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      document.getElementById('adminUsers').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="color:var(--text-faint);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:4px 6px">User</th><th style="text-align:right;padding:4px 6px">Credits</th><th style="text-align:right;padding:4px 6px">Usage (this month)</th><th style="text-align:right;padding:4px 6px">Actions</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      [].forEach.call(document.querySelectorAll('#adminUsers [data-pw]'), function(b){ b.onclick=function(){ var a=prompt('Set a new temporary password for this user (min 6 chars):',''); if(a==null) return; if(a.length<6){ alert('Password must be at least 6 characters.'); return; } fetch('/api/admin/users/'+b.getAttribute('data-pw')+'/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:a})}).then(handleJson).then(function(){ alert('Password reset. The user has been signed out everywhere and must use the new password.'); }).catch(function(e){ alert(e.message); }); }; });
       [].forEach.call(document.querySelectorAll('#adminUsers [data-addc]'), function(b){ b.onclick=function(){ var a=prompt('Add how many credits?','5000'); if(a==null) return; var n=parseInt(a,10); if(!n) return; fetch('/api/admin/users/'+b.getAttribute('data-addc')+'/credits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({add:n})}).then(handleJson).then(function(){ renderAdminUsers(); refreshMe(); }).catch(function(e){ alert(e.message); }); }; });
       [].forEach.call(document.querySelectorAll('#adminUsers [data-setc]'), function(b){ b.onclick=function(){ var a=prompt('Set credits to what value?','20000'); if(a==null) return; var n=parseInt(a,10); if(isNaN(n)) return; fetch('/api/admin/users/'+b.getAttribute('data-setc')+'/credits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({set:n})}).then(handleJson).then(function(){ renderAdminUsers(); refreshMe(); }).catch(function(e){ alert(e.message); }); }; });
       [].forEach.call(document.querySelectorAll('#adminUsers [data-delu]'), function(b){ b.onclick=function(){ if(!confirm('Remove this user and all their generations?')) return; fetch('/api/admin/users/'+b.getAttribute('data-delu'),{method:'DELETE'}).then(handleJson).then(function(){ renderAdminUsers(); }).catch(function(e){ alert(e.message); }); }; });
@@ -560,6 +581,7 @@
   }
   document.getElementById('adminAddForm').addEventListener('submit', function(e){ e.preventDefault(); var email=document.getElementById('newEmail').value.trim(); var password=document.getElementById('newPass').value; var credits=document.getElementById('newCredits').value; var err=document.getElementById('adminErr'); err.textContent=''; fetch('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password,credits:credits?+credits:undefined})}).then(handleJson).then(function(){ document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; document.getElementById('newCredits').value=''; renderAdminUsers(); }).catch(function(e2){ err.textContent=e2.message; }); });
   document.getElementById('adminBtn').onclick = openAdmin;
+  var abk = document.getElementById('adminBackup'); if (abk) abk.onclick = function(){ window.location.href = '/api/admin/backup'; };
   function loadPricing(){
     fetch('/api/admin/settings').then(handleJson).then(function(d){
       var s = d.settings;

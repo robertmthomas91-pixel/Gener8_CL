@@ -64,6 +64,18 @@ function saveDb() {
   fs.writeFileSync(tmp, JSON.stringify(db));
   fs.renameSync(tmp, DB_FILE);
 }
+const BACKUP_DIR = path.join(DATA_DIR, "backups");
+const BACKUP_KEEP = 28; // ~1 week at one snapshot / 6h
+function backupDb() {
+  try {
+    if (!fs.existsSync(DB_FILE)) return;
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.copyFileSync(DB_FILE, path.join(BACKUP_DIR, `db-${ts}.json`));
+    const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.startsWith("db-") && f.endsWith(".json")).sort();
+    while (files.length > BACKUP_KEEP) { try { fs.unlinkSync(path.join(BACKUP_DIR, files.shift())); } catch {} }
+  } catch (e) { console.error("backupDb:", e); }
+}
 
 function rid(n = 12) { return crypto.randomBytes(n).toString("hex"); }
 function hashPw(pw, salt) {
@@ -108,10 +120,32 @@ for (const f of Object.values(db.feed)) {
 }
 saveDb();
 pruneExpired();
+backupDb();
+setInterval(backupDb, 6 * 60 * 60 * 1000); // local rotating snapshot every 6h
 
 // ---------------------------------------------------------------------------
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "30mb" }));
+
+// ---- lightweight in-memory rate limiting (single instance) ------------------
+const rlStore = new Map();
+function clientIp(req) { return ((req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.ip || "ip"; }
+function rateLimit({ max, windowMs, key }) {
+  return (req, res, next) => {
+    const k = key(req); const now = Date.now();
+    let e = rlStore.get(k);
+    if (!e || e.reset < now) { e = { count: 0, reset: now + windowMs }; rlStore.set(k, e); }
+    e.count++;
+    if (e.count > max) { const sec = Math.ceil((e.reset - now) / 1000); res.setHeader("Retry-After", sec); return res.status(429).json({ error: `Too many requests — try again in ${sec}s.` }); }
+    next();
+  };
+}
+setInterval(() => { const now = Date.now(); for (const [k, e] of rlStore) if (e.reset < now) rlStore.delete(k); }, 10 * 60 * 1000);
+const loginLimit = rateLimit({ max: 12, windowMs: 15 * 60 * 1000, key: (req) => "login:" + clientIp(req) });
+const genLimit = rateLimit({ max: 40, windowMs: 60 * 1000, key: (req) => { const u = currentUser(req); return "gen:" + (u ? u.id : clientIp(req)); } });
+// Per-email failed-login lockout
+const loginFails = new Map(); // email -> { count, until }
 
 function parseCookies(req) {
   const out = {};
@@ -121,11 +155,12 @@ function parseCookies(req) {
   });
   return out;
 }
-function setSession(res, userId) {
+function setSession(req, res, userId) {
   const token = rid(24);
   db.sessions[token] = { userId, expires: Date.now() + 1000 * 60 * 60 * 24 * 30 };
   saveDb();
-  res.setHeader("Set-Cookie", `g8session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`);
+  const secure = ((req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https") ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `g8session=${token}; HttpOnly; Path=/; SameSite=Lax${secure}; Max-Age=${60 * 60 * 24 * 30}`);
 }
 function clearSession(req, res) {
   const c = parseCookies(req);
@@ -159,8 +194,18 @@ function requireAdmin(req, res, next) {
 function publicUser(u) {
   return { id: u.id, email: u.email, role: u.role, credits: u.credits, creditsMonth: u.creditsMonth, createdAt: u.createdAt };
 }
-function charge(u, amt) { u.credits = Math.max(0, u.credits - amt); saveDb(); }
+// Atomic check+deduct (synchronous — no await inside, so requests can't interleave).
+function tryReserve(u, amt) { if (u.credits < amt) return false; u.credits -= amt; saveDb(); return true; }
 function refund(u, amt) { u.credits += amt; saveDb(); }
+// Per-user monthly usage ledger (counts, credits spent, estimated real $ cost).
+function recordUsage(u, kind, n, credits, usd) {
+  const m = ym();
+  u.usage = u.usage || {};
+  const e = (u.usage[m] = u.usage[m] || { images: 0, videos: 0, vo: 0, music: 0, credits: 0, usd: 0 });
+  if (kind) e[kind] = (e[kind] || 0) + (n || 0);
+  e.credits += credits || 0; e.usd += usd || 0;
+  saveDb();
+}
 
 // ---- media -----------------------------------------------------------------
 function saveMedia(buf, ext, userId) {
@@ -192,12 +237,22 @@ function saveInputUrl(d, userId) {
   if (!im) return null;
   return saveMedia(Buffer.from(im.imageBytes, "base64"), (im.mimeType.split("/")[1] || "png").replace("jpeg", "jpg").replace("+xml", ""), userId);
 }
+const MAX_ADDED_VOICES = 10; // keep the account's voice slots from filling up
+function addedId(v) { return typeof v === "string" ? v : (v && v.id); }
 async function resolveVoice(voiceId, ownerId) {
   // Account voices (no owner) are usable directly. Library voices must be added
-  // to the account first; we cache the added copy so we only add each one once.
+  // to the account first; we cache the added copy and LRU-evict old ones so we
+  // never exhaust the ElevenLabs account voice limit.
   if (!ownerId) return voiceId;
   const key = ownerId + "/" + voiceId;
-  if (db.voiceAdds[key]) return db.voiceAdds[key];
+  if (db.voiceAdds[key]) { const id = addedId(db.voiceAdds[key]); db.voiceAdds[key] = { id, lastUsed: Date.now() }; saveDb(); return id; }
+  const keys = Object.keys(db.voiceAdds);
+  if (keys.length >= MAX_ADDED_VOICES) {
+    keys.sort((a, b) => ((db.voiceAdds[a] && db.voiceAdds[a].lastUsed) || 0) - ((db.voiceAdds[b] && db.voiceAdds[b].lastUsed) || 0));
+    const victimKey = keys[0]; const vid = addedId(db.voiceAdds[victimKey]);
+    try { await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(vid)}`, { method: "DELETE", headers: { "xi-api-key": ELEVEN_KEY } }); } catch {}
+    delete db.voiceAdds[victimKey]; saveDb();
+  }
   const r = await fetch(`https://api.elevenlabs.io/v1/voices/add/${encodeURIComponent(ownerId)}/${encodeURIComponent(voiceId)}`, {
     method: "POST",
     headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json" },
@@ -206,7 +261,7 @@ async function resolveVoice(voiceId, ownerId) {
   if (!r.ok) throw new Error("Could not add that library voice — your ElevenLabs plan may be at its voice limit.");
   const d = await r.json();
   const newId = d.voice_id || voiceId;
-  db.voiceAdds[key] = newId; saveDb();
+  db.voiceAdds[key] = { id: newId, lastUsed: Date.now() }; saveDb();
   return newId;
 }
 function pruneExpired() {
@@ -233,12 +288,22 @@ function clientRecord(r) {
 }
 
 // ---- auth ------------------------------------------------------------------
-app.post("/api/login", (req, res) => {
-  const { email, password } = req.body || {};
-  const u = Object.values(db.users).find((x) => x.email === (email || "").toLowerCase().trim());
-  if (!u || !verifyPw(password || "", u.salt, u.passwordHash)) return res.status(401).json({ error: "Wrong email or password." });
+app.post("/api/login", loginLimit, (req, res) => {
+  const email = (req.body && req.body.email || "").toLowerCase().trim();
+  const password = (req.body && req.body.password) || "";
+  const lock = loginFails.get(email);
+  if (lock && lock.until > Date.now()) { const sec = Math.ceil((lock.until - Date.now()) / 1000); return res.status(429).json({ error: `Too many failed attempts — try again in ${sec}s.` }); }
+  const u = Object.values(db.users).find((x) => x.email === email);
+  if (!u || !verifyPw(password, u.salt, u.passwordHash)) {
+    const f = loginFails.get(email) || { count: 0, until: 0 };
+    f.count++;
+    if (f.count >= 5) { f.until = Date.now() + 15 * 60 * 1000; f.count = 0; }
+    loginFails.set(email, f);
+    return res.status(401).json({ error: "Wrong email or password." });
+  }
+  loginFails.delete(email);
   ensureMonthly(u);
-  setSession(res, u.id);
+  setSession(req, res, u.id);
   res.json({ user: publicUser(u) });
 });
 app.post("/api/logout", (req, res) => { clearSession(req, res); res.json({ ok: true }); });
@@ -296,63 +361,69 @@ app.get("/api/voices", requireAuth, async (req, res) => {
 });
 
 // ---- VOICEOVER — ElevenLabs text-to-speech --------------------------------
-app.post("/api/generate-vo", requireAuth, async (req, res) => {
+app.post("/api/generate-vo", genLimit, requireAuth, async (req, res) => {
   if (!requireEleven(res)) return;
   const u = req.user;
+  let reserved = 0;
   try {
     const { text, voiceId, ownerId, voiceName } = req.body || {};
     if (!text || !text.trim()) return res.status(400).json({ error: "Some text to speak is required." });
     if (text.length > 5000) return res.status(400).json({ error: "Text is too long (max 5000 characters)." });
     const cost = db.settings.voCost;
-    if (u.credits < cost) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    if (!tryReserve(u, cost)) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    reserved = cost;
     let vid = (voiceId && /^[A-Za-z0-9_-]+$/.test(voiceId)) ? voiceId : ELEVEN_DEFAULT_VOICE;
     const owner = (ownerId && /^[A-Za-z0-9_-]+$/.test(ownerId)) ? ownerId : null;
-    try { vid = await resolveVoice(vid, owner); } catch (e) { return res.status(502).json({ error: e.message }); }
+    try { vid = await resolveVoice(vid, owner); } catch (e) { refund(u, reserved); reserved = 0; return res.status(502).json({ error: e.message }); }
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${vid}`, {
       method: "POST",
       headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
       body: JSON.stringify({ text, model_id: ELEVEN_TTS_MODEL }),
     });
-    if (!r.ok) { const t = await r.text(); return res.status(502).json({ error: "Voice generation failed: " + t.slice(0, 200) }); }
+    if (!r.ok) { const t = await r.text(); refund(u, reserved); reserved = 0; return res.status(502).json({ error: "Voice generation failed: " + t.slice(0, 200) }); }
     const ab = await r.arrayBuffer();
     const url = saveMedia(Buffer.from(ab), "mp3", u.id);
-    charge(u, cost);
+    recordUsage(u, "vo", 1, cost, (text.length / 1000) * 0.30);
     const rec = { id: rid(), userId: u.id, type: "audio", subtype: "vo", prompt: text, voice: vid, voiceName: voiceName || null, items: [url], inputs: [], status: "done", createdAt: Date.now() };
     db.feed[rec.id] = rec; saveDb();
     res.json({ record: clientRecord(rec), credits: u.credits });
-  } catch (err) { console.error("generate-vo:", err); res.status(500).json({ error: err?.message || "Voice generation failed." }); }
+  } catch (err) { if (reserved) refund(u, reserved); console.error("generate-vo:", err); res.status(500).json({ error: err?.message || "Voice generation failed." }); }
 });
 
 // ---- MUSIC — ElevenLabs Music ---------------------------------------------
-app.post("/api/generate-music", requireAuth, async (req, res) => {
+app.post("/api/generate-music", genLimit, requireAuth, async (req, res) => {
   if (!requireEleven(res)) return;
   const u = req.user;
+  let reserved = 0;
   try {
     const { prompt, lengthMs } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A music prompt is required." });
     const cost = db.settings.musicCost;
-    if (u.credits < cost) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    if (!tryReserve(u, cost)) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    reserved = cost;
     const len = Math.max(5000, Math.min(Number(lengthMs) || 30000, 120000));
     const r = await fetch("https://api.elevenlabs.io/v1/music", {
       method: "POST",
       headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
       body: JSON.stringify({ prompt, music_length_ms: len }),
     });
-    if (!r.ok) { const t = await r.text(); return res.status(502).json({ error: "Music generation failed: " + t.slice(0, 200) }); }
+    if (!r.ok) { const t = await r.text(); refund(u, reserved); reserved = 0; return res.status(502).json({ error: "Music generation failed: " + t.slice(0, 200) }); }
     const ab = await r.arrayBuffer();
     const url = saveMedia(Buffer.from(ab), "mp3", u.id);
-    charge(u, cost);
+    recordUsage(u, "music", 1, cost, (len / 1000) * 0.08);
     const rec = { id: rid(), userId: u.id, type: "audio", subtype: "music", prompt, duration: Math.round(len / 1000), items: [url], inputs: [], status: "done", createdAt: Date.now() };
     db.feed[rec.id] = rec; saveDb();
     res.json({ record: clientRecord(rec), credits: u.credits });
-  } catch (err) { console.error("generate-music:", err); res.status(500).json({ error: err?.message || "Music generation failed." }); }
+  } catch (err) { if (reserved) refund(u, reserved); console.error("generate-music:", err); res.status(500).json({ error: err?.message || "Music generation failed." }); }
 });
 
 app.get("/api/health", (_q, res) => res.json({ ok: true, keyConfigured: !!ai }));
 
 // ---- admin: user management ------------------------------------------------
 app.get("/api/admin/users", requireAdmin, (req, res) => {
-  res.json({ users: Object.values(db.users).map(publicUser).sort((a, b) => a.createdAt - b.createdAt) });
+  const m = ym();
+  const blank = { images: 0, videos: 0, vo: 0, music: 0, credits: 0, usd: 0 };
+  res.json({ users: Object.values(db.users).sort((a, b) => a.createdAt - b.createdAt).map((u) => ({ ...publicUser(u), usage: (u.usage && u.usage[m]) || blank })) });
 });
 app.post("/api/admin/users", requireAdmin, (req, res) => {
   let { email, password, credits } = req.body || {};
@@ -384,6 +455,24 @@ app.post("/api/admin/users/:id/credits", requireAdmin, (req, res) => {
   if (Number.isFinite(+add)) u.credits = Math.max(0, u.credits + Math.round(+add));
   saveDb();
   res.json({ user: publicUser(u) });
+});
+app.post("/api/admin/users/:id/password", requireAdmin, (req, res) => {
+  const u = db.users[req.params.id];
+  if (!u) return res.status(404).json({ error: "No such user." });
+  const pw = (req.body && req.body.password) || "";
+  if (String(pw).length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+  const { salt, hash } = hashPw(pw);
+  u.salt = salt; u.passwordHash = hash;
+  for (const [t, sn] of Object.entries(db.sessions)) if (sn.userId === u.id) delete db.sessions[t]; // sign them out everywhere
+  saveDb();
+  res.json({ ok: true });
+});
+// Admin: download a backup of the database (accounts, credits, feed index)
+app.get("/api/admin/backup", requireAdmin, (req, res) => {
+  backupDb();
+  res.setHeader("Content-Disposition", `attachment; filename="gener8-backup-${new Date().toISOString().slice(0,10)}.json"`);
+  res.setHeader("Content-Type", "application/json");
+  res.send(fs.readFileSync(DB_FILE));
 });
 
 function pricingPublic() {
@@ -431,16 +520,18 @@ app.delete("/api/feed/:id", requireAuth, (req, res) => {
 });
 
 // ---- IMAGES — Nano Banana Pro ----------------------------------------------
-app.post("/api/generate-image", requireAuth, async (req, res) => {
+app.post("/api/generate-image", genLimit, requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
+  let reserved = 0;
   try {
     const { prompt, count = 1, aspectRatio = "1:1", references = [], model = "std" } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
     const imodel = model === "pro" ? "pro" : "std";
     const perImage = imodel === "pro" ? db.settings.imageProCost : db.settings.imageCost;
-    if (u.credits < perImage * n) return res.status(402).json({ error: `Not enough credits — this needs ${perImage * n}, you have ${u.credits}.` });
+    if (!tryReserve(u, perImage * n)) return res.status(402).json({ error: `Not enough credits — this needs ${perImage * n}, you have ${u.credits}.` });
+    reserved = perImage * n;
 
     const refData = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 5);
     const refParts = refData.map(toInlineImage).filter(Boolean);
@@ -457,20 +548,23 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
         }
       }
     }
-    if (!items.length) return res.status(502).json({ error: "The model returned no image (it may have been safety-filtered). Try a different prompt." });
-    charge(u, perImage * items.length);
+    if (!items.length) { refund(u, reserved); reserved = 0; return res.status(502).json({ error: "The model returned no image (it may have been safety-filtered). Try a different prompt." }); }
+    if (items.length < n) refund(u, perImage * (n - items.length));
+    reserved = perImage * items.length;
+    recordUsage(u, "images", items.length, reserved, (imodel === "pro" ? 0.13 : 0.04) * items.length);
     const inputs = refData.map((d) => saveInputUrl(d, u.id)).filter(Boolean);
     const r = { id: rid(), userId: u.id, type: "image", genMode: null, imodel, prompt, aspect: aspectRatio, count: items.length, items, inputs, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
     db.feed[r.id] = r; saveDb();
     res.json({ record: clientRecord(r), credits: u.credits });
   } catch (err) {
+    if (reserved) refund(u, reserved);
     console.error("generate-image:", err);
     res.status(500).json({ error: err?.message || "Image generation failed." });
   }
 });
 
 // ---- UPSCALE IMAGE to 4K ---------------------------------------------------
-app.post("/api/upscale-image", requireAuth, async (req, res) => {
+app.post("/api/upscale-image", genLimit, requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
   const { recordId, idx } = req.body || {};
@@ -479,7 +573,9 @@ app.post("/api/upscale-image", requireAuth, async (req, res) => {
   const i = Number(idx);
   const url = r.items && r.items[i];
   if (!url || !url.startsWith("/media/")) return res.status(400).json({ error: "Nothing to upscale." });
-  if (u.credits < db.settings.upscaleCost) return res.status(402).json({ error: `Not enough credits — upscaling needs ${db.settings.upscaleCost}.` });
+  const upCost = db.settings.upscaleCost;
+  if (!tryReserve(u, upCost)) return res.status(402).json({ error: `Not enough credits — upscaling needs ${upCost}.` });
+  let reserved = upCost;
   try {
     const buf = fs.readFileSync(path.join(MEDIA_DIR, url.slice(7)));
     const img = { inlineData: { mimeType: "image/png", data: buf.toString("base64") } };
@@ -493,15 +589,16 @@ app.post("/api/upscale-image", requireAuth, async (req, res) => {
     for (const p of parts) {
       if (p.inlineData?.data) { newUrl = saveMedia(Buffer.from(p.inlineData.data, "base64"), (p.inlineData.mimeType || "image/png").split("/")[1].replace("jpeg", "jpg"), u.id); break; }
     }
-    if (!newUrl) return res.status(502).json({ error: "Upscale returned no image." });
+    if (!newUrl) { refund(u, reserved); reserved = 0; return res.status(502).json({ error: "Upscale returned no image." }); }
     delMediaUrl(r.items[i]);
     r.items[i] = newUrl;
     r.upscaled = r.upscaled || [];
     r.upscaled[i] = true;
-    charge(u, db.settings.upscaleCost);
+    recordUsage(u, "images", 0, upCost, 0.24);
     saveDb();
     res.json({ url: newUrl, credits: u.credits });
   } catch (err) {
+    if (reserved) refund(u, reserved);
     console.error("upscale-image:", err);
     res.status(500).json({ error: err?.message || "Image upscale failed." });
   }
@@ -509,9 +606,10 @@ app.post("/api/upscale-image", requireAuth, async (req, res) => {
 
 // ---- VIDEO — Veo 3.1 Fast (grouped record, up to 4 clips) ------------------
 const videoOps = new Map(); // jobKey -> { op }
-app.post("/api/generate-video", requireAuth, async (req, res) => {
+app.post("/api/generate-video", genLimit, requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
+  let reserved = 0;
   try {
     const { mode = "video", prompt, aspectRatio = "16:9", duration = 8, negativePrompt = "", resolution = "720p", frames = [], references = [], count = 1, model = "fast" } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
@@ -519,7 +617,7 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
     const modelKey = model === "lite" ? "lite" : "fast";
     const base = modelKey === "lite" ? db.settings.videoLite : db.settings.videoFast;
     const perClip = Math.round(base * (resolution === "1080p" ? db.settings.hdMultiplier : 1));
-    if (u.credits < perClip * n) return res.status(402).json({ error: `Not enough credits — this needs ${perClip * n}, you have ${u.credits}.` });
+    const perClipUsd = (modelKey === "fast" ? 0.15 : (resolution === "1080p" ? 0.08 : 0.05)) * Math.max(4, Math.min(Number(duration) || 8, 8));
 
     const config = { aspectRatio: aspectRatio === "9:16" ? "9:16" : "16:9", resolution, durationSeconds: Math.max(4, Math.min(Number(duration) || 8, 8)) };
     if (negativePrompt && negativePrompt.trim()) config.negativePrompt = negativePrompt.trim();
@@ -546,8 +644,9 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
     let inputUrls = [];
     if (mode === "frames") inputUrls = (frames || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 2).map((d) => saveInputUrl(d, u.id)).filter(Boolean);
     else if (mode === "ingredients") inputUrls = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 3).map((d) => saveInputUrl(d, u.id)).filter(Boolean);
-    charge(u, perClip * n); // reserve up-front; refunded per failed clip
-    const r = { id: rid(), userId: u.id, type: "video", genMode: mode, prompt, neg: (negativePrompt && negativePrompt.trim()) || "", aspect: config.aspectRatio, count: n, duration: config.durationSeconds, resolution, model: modelKey, perClip, items: new Array(n).fill(null), inputs: inputUrls, slots: [], status: "generating", createdAt: Date.now() };
+    if (!tryReserve(u, perClip * n)) return res.status(402).json({ error: `Not enough credits — this needs ${perClip * n}, you have ${u.credits}.` }); // reserve up-front; refunded per failed clip
+    reserved = perClip * n;
+    const r = { id: rid(), userId: u.id, type: "video", genMode: mode, prompt, neg: (negativePrompt && negativePrompt.trim()) || "", aspect: config.aspectRatio, count: n, duration: config.durationSeconds, resolution, model: modelKey, perClip, perClipUsd, items: new Array(n).fill(null), inputs: inputUrls, slots: [], status: "generating", createdAt: Date.now() };
     for (let k = 0; k < n; k++) r.slots.push({ status: "generating", error: null, jobKey: null });
     db.feed[r.id] = r; saveDb();
 
@@ -569,6 +668,7 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
     }
     res.json({ record: clientRecord(r), credits: u.credits });
   } catch (err) {
+    if (reserved) refund(u, reserved);
     console.error("generate-video:", err);
     res.status(500).json({ error: err?.message || "Video generation failed to start." });
   }
@@ -597,6 +697,7 @@ app.get("/api/video-status", requireAuth, async (req, res) => {
       const ab = await up.arrayBuffer();
       r.items[i] = saveMedia(Buffer.from(ab), "mp4", u.id);
       slot.status = "done";
+      recordUsage(u, "videos", 1, r.perClip || 0, r.perClipUsd || 0);
     } catch (err) { /* transient — keep polling */ }
   }));
   if (r.slots.every((s) => s.status !== "generating")) r.status = r.slots.every((s) => s.status === "error") ? "error" : "done";
