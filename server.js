@@ -256,18 +256,28 @@ app.get("/api/voices", requireAuth, async (req, res) => {
   if (!q) {
     try {
       const ar = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
-      if (ar.ok) { const ad = await ar.json(); (ad.voices || []).forEach((v) => out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: null, desc: "In your library" })); }
+      if (ar.ok) {
+        const ad = await ar.json();
+        (ad.voices || []).forEach((v) => {
+          const acc = ((v.labels && v.labels.accent) || "").toString();
+          if (!/brit|english \(uk\)|en-?gb/i.test(acc)) return; // British voices only
+          out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: null, desc: "In your library" });
+        });
+      }
     } catch {}
   }
   // The ElevenLabs shared voice library (searchable, with audio previews).
   try {
     const url = new URL("https://api.elevenlabs.io/v1/shared-voices");
-    url.searchParams.set("page_size", "30");
+    url.searchParams.set("page_size", "100");
+    url.searchParams.set("accent", "british");   // British voices only
     if (q) url.searchParams.set("search", q);
     const sr = await fetch(url, { headers: { "xi-api-key": ELEVEN_KEY } });
     if (sr.ok) {
       const sd = await sr.json();
       (sd.voices || []).forEach((v) => {
+        const acc = ((v.accent || "") + " " + (v.locale || "")).toLowerCase();
+        if (!/brit|en-?gb/.test(acc)) return; // British voices only
         const bits = [v.gender, v.accent, v.age, v.use_case || v.descriptive].filter(Boolean);
         out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: v.public_owner_id || null, desc: bits.join(" · ") });
       });
