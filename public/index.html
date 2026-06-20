@@ -228,6 +228,7 @@
             <input id="voiceSearch" type="text" autocomplete="off" placeholder="Search the voice library…" style="padding:8px 11px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;min-width:190px" />
             <div id="voiceList" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:60;min-width:230px;max-height:260px;overflow:auto;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-lg)"></div>
           </div>
+          <div id="voiceMsg" style="font-size:11px;color:var(--danger);margin-top:4px;max-width:220px"></div>
         </div>
         <div id="musicWrap" style="display:none">
           <div class="lbl">Length</div>
@@ -318,7 +319,7 @@
 
 <script>
 (function(){
-  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:30000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
   var PRICING = { startCredits:20000, imageCost:2, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
@@ -456,8 +457,8 @@
     if (!pillClickable) document.getElementById('modelMenu').style.display = 'none';
     if (isVideo) renderOpts('resOpts', ['720p','1080p'], state.videoRes, function(r){ return r === '1080p' ? '1080p +' : r; }, function(v){ state.videoRes = v; renderControls(); });
     if (isVideo) [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); var base=mk==='lite'?PRICING.videoLite:PRICING.videoFast; b.innerHTML=(mk==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')+' <span style="color:var(--text-faint);font-weight:500">'+base+' cr/clip</span>'; b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; });
-    if (isMusic) renderOpts('musicOpts', [15,30,60], Math.round(state.musicLen/1000), function(d){ return d + 's'; }, function(v){ state.musicLen = v*1000; renderControls(); });
-    if (isVO){ var vsi = document.getElementById('voiceSearch'); if (vsi && document.activeElement !== vsi) vsi.value = state.voiceName || voiceName(state.voiceId); }
+    if (isMusic) renderOpts('musicOpts', [60,90,120], Math.round(state.musicLen/1000), function(d){ return d + 's'; }, function(v){ state.musicLen = v*1000; renderControls(); });
+    if (isVO){ var vsi = document.getElementById('voiceSearch'); if (vsi && document.activeElement !== vsi) vsi.value = state.voiceName || voiceName(state.voiceId); if (!voicesLoadedOnce) loadVoices(''); }
     [].forEach.call(document.querySelectorAll('#videoModeTabs .tab'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-vmode') === state.videoMode)); });
     var placeholders = {
       image: 'Describe the image you want — subject, style, lighting, composition, mood, colour…',
@@ -584,12 +585,16 @@
     });
   }
   function loadVoices(q){
-    fetch('/api/voices' + (q ? ('?q=' + encodeURIComponent(q)) : '')).then(handleJson).then(function(d){
-      VOICES = d.voices || [];
-      voicesLoadedOnce = true;
+    voicesLoadedOnce = true;
+    fetch('/api/voices' + (q ? ('?q=' + encodeURIComponent(q)) : '')).then(function(r){ return r.json().then(function(d){ return { ok: r.ok, d: d }; }); }).then(function(res){
+      var msg = document.getElementById('voiceMsg');
+      if (!res.ok){ VOICES = []; if (msg) msg.textContent = (res.d && res.d.error) || 'Could not load voices.'; renderVoiceList(); return; }
+      if (msg) msg.textContent = '';
+      VOICES = res.d.voices || [];
+      if (!VOICES.length && msg) msg.textContent = q ? 'No voices match that search.' : 'No voices returned.';
       if (!state.voiceId && VOICES.length){ state.voiceId = VOICES[0].id; state.voiceOwner = VOICES[0].ownerId || null; state.voiceName = VOICES[0].name; var si0 = document.getElementById('voiceSearch'); if (si0 && document.activeElement !== si0) si0.value = state.voiceName; }
       renderVoiceList();
-    }).catch(function(){ VOICES = []; renderVoiceList(); });
+    }).catch(function(){ VOICES = []; var msg = document.getElementById('voiceMsg'); if (msg) msg.textContent = 'Could not reach the server.'; renderVoiceList(); });
   }
   (function(){
     var si = document.getElementById('voiceSearch'); var list = document.getElementById('voiceList');

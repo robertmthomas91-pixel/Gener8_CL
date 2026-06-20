@@ -250,16 +250,17 @@ function requireEleven(res) {
 app.get("/api/voices", requireAuth, async (req, res) => {
   if (!requireEleven(res)) return;
   const q = (req.query.q || "").toString().trim();
+  const out = [];
+  let errDetail = null;
+  // Without a search term, also surface the user's own/account voices first.
+  if (!q) {
+    try {
+      const ar = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
+      if (ar.ok) { const ad = await ar.json(); (ad.voices || []).forEach((v) => out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: null, desc: "In your library" })); }
+    } catch {}
+  }
+  // The ElevenLabs shared voice library (searchable, with audio previews).
   try {
-    const out = [];
-    // Without a search term, also surface the user's own/account voices first.
-    if (!q) {
-      try {
-        const ar = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
-        if (ar.ok) { const ad = await ar.json(); (ad.voices || []).forEach((v) => out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: null, desc: "In your library" })); }
-      } catch {}
-    }
-    // The ElevenLabs shared voice library (searchable, with audio previews).
     const url = new URL("https://api.elevenlabs.io/v1/shared-voices");
     url.searchParams.set("page_size", "30");
     if (q) url.searchParams.set("search", q);
@@ -270,11 +271,16 @@ app.get("/api/voices", requireAuth, async (req, res) => {
         const bits = [v.gender, v.accent, v.age, v.use_case || v.descriptive].filter(Boolean);
         out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: v.public_owner_id || null, desc: bits.join(" · ") });
       });
+    } else {
+      const t = await sr.text();
+      errDetail = `ElevenLabs returned ${sr.status} (check your ELEVENLABS_API_KEY).` + (t ? " " + t.slice(0, 160) : "");
+      console.error("shared-voices error:", sr.status, t.slice(0, 300));
     }
-    const seen = new Set();
-    const voices = out.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id)).slice(0, 60);
-    res.json({ voices });
-  } catch (err) { res.status(500).json({ error: err?.message || "Failed to load voices." }); }
+  } catch (err) { errDetail = err?.message || "Voice library request failed."; }
+  const seen = new Set();
+  const voices = out.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id)).slice(0, 60);
+  if (!voices.length && errDetail) return res.status(502).json({ error: errDetail });
+  res.json({ voices });
 });
 
 // ---- VOICEOVER — ElevenLabs text-to-speech --------------------------------

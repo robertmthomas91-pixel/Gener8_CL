@@ -105,7 +105,7 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
 | **Video** | Image → Video | Veo 3.1 Fast | an input image (+ optional end frame) + prompt → up to 4 videos |
 | **Video** | Ingredients | Veo 3.1 Fast | up to 3 reference images + prompt → up to 4 videos (always 8s) |
 | **VO** | — | ElevenLabs TTS | text + a **searchable voice library** (with audio previews) → an audio clip |
-| **Music** | — | ElevenLabs Music | prompt + length (15/30/60s) → a music track |
+| **Music** | — | ElevenLabs Music | prompt + length (60/90/120s) → a music track |
 
 ## Working with results
 
