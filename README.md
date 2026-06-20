@@ -79,7 +79,15 @@ Video jobs are tracked in memory, which is fine for a single Railway instance. I
 ## Accounts, credits & persistence
 
 - **Accounts are admin-managed.** The first admin is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first run. Sign in, click **Admin**, and add/remove users, set their passwords, and assign credits. There is no public sign-up.
-- **Credits.** Every account starts each month with **20,000 credits**. Images cost **2 credits each**. Video is priced per clip by model — **20 credits on Veo 3.1 Fast** or **10 on Veo 3.1 Lite** (choose the model in the video controls; e.g. 4 Fast clips = 80, 4 Lite = 40). A 4K image upscale costs 2. Balances **reset to 20,000 on the 1st of each month**; the admin can top up or set any balance at any time.
+- **Credits.** Every account starts each month with **20,000 credits**. Images cost **2 credits each**. Video is priced per clip by **model and resolution** (chosen in the video controls); 1080p is a 1.5× premium over the 720p base:
+
+  | Model | 720p | 1080p |
+  |---|---|---|
+  | **Veo 3.1 Lite** (default) | 10 | 15 |
+  | **Veo 3.1 Fast** | 20 | 30 |
+
+  Defaults are **Lite + 720p** (cheapest). A 4K image upscale costs 4. Balances **reset to the monthly grant on the 1st of each month**; the admin can top up or set any balance.
+- **Admin‑editable pricing.** The monthly credit grant, every per‑action credit cost (image, 4K upscale, Lite/Fast base, the 1080p multiplier) and the media‑retention window are all editable from **Admin → Pricing & limits** — changes apply immediately, no redeploy. Defaults: 20,000 grant · image 2 · upscale 4 · Lite 10 / Fast 20 (720p) · 1080p ×1.5 · 30‑day retention.
 - **Persistent feed.** Generated images and videos are saved on the server (under `DATA_DIR`) and reload from `/api/feed`, so your feed survives page refreshes and redeploys. Each item is private to its owner (and the admin). Hover an item to **delete** it from the feed.
 - **Security notes.** Passwords are hashed (scrypt) and never stored in plain text; sessions are http-only cookies. This is a straightforward auth system, not a security-audited product — use HTTPS (Railway provides it), set a strong `ADMIN_PASSWORD`, and rotate it if needed.
 
@@ -103,7 +111,9 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
   - **Upscale to 4K** (images only) — re-renders the image at 4K via `/api/upscale-image`.
   - **Use for video** (images only) — loads the image into **Video → Image → Video** as the input frame so you can animate a generation you just made.
 
-Video is generated **natively at 1080p** (Veo 3.1 Fast outputs 1080p as a fixed 8-second clip), so there's no separate video upscale step — every clip is already 1080p. Use the **Outputs** control (1–4) to generate up to four variations per prompt, the same as images (each video is a separate paid job).
+Video defaults to **Veo 3.1 Lite at 720p** (the cheapest combination); switch the model (Lite/Fast) via the model pill and the resolution (720p/1080p) via the Resolution control — 1080p costs 1.5× the credits. All clips are 8 seconds. Use the **Outputs** control (1–4) to generate up to four variations per prompt.
+
+**Media retention:** generations (images and videos) are **automatically deleted after 30 days** to control storage — set `RETENTION_DAYS` to change this.
 
 ## Notes & limits
 

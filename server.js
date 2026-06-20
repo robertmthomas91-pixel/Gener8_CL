@@ -22,9 +22,16 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const MEDIA_DIR = path.join(DATA_DIR, "media");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
-const START_CREDITS = 20000;
-const IMAGE_COST = 2;   // credits per generated image
-const VIDEO_COST = { fast: 20, lite: 10 };  // credits per generated video clip, by model
+// Admin-editable pricing & limits (stored in the DB, tunable from the Admin panel)
+const DEFAULT_SETTINGS = {
+  startCredits: 20000,   // monthly credit grant per user
+  imageCost: 2,          // credits per generated image
+  upscaleCost: 4,        // credits per 4K image upscale
+  videoLite: 10,         // base (720p) credits per Veo Lite clip
+  videoFast: 20,         // base (720p) credits per Veo Fast clip
+  hdMultiplier: 1.5,     // 1080p premium multiplier
+  retentionDays: Number(process.env.RETENTION_DAYS) || 30, // days before auto-delete
+};
 
 const IMAGE_MODEL = "gemini-3-pro-image-preview";   // Nano Banana Pro
 const VIDEO_MODELS = { fast: "veo-3.1-fast-generate-preview", lite: "veo-3.1-lite-generate-preview" };
@@ -39,6 +46,7 @@ if (!API_KEY) {
 // ---------------------------------------------------------------------------
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 let db = loadDb();
+db.settings = { ...DEFAULT_SETTINGS, ...(db.settings || {}) };
 function loadDb() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); }
   catch { return { users: {}, sessions: {}, feed: {}, media: {}, meta: {} }; }
@@ -73,7 +81,7 @@ function ym(d = new Date()) {
   if (!pw) { pw = rid(8); generated = true; }
   const id = rid();
   const { salt, hash } = hashPw(pw);
-  db.users[id] = { id, email, passwordHash: hash, salt, role: "admin", credits: START_CREDITS, creditsMonth: ym(), createdAt: Date.now() };
+  db.users[id] = { id, email, passwordHash: hash, salt, role: "admin", credits: db.settings.startCredits, creditsMonth: ym(), createdAt: Date.now() };
   saveDb();
   console.log("\n==================== GENER8 admin account ====================");
   console.log("  email:    " + email);
@@ -91,6 +99,7 @@ for (const f of Object.values(db.feed)) {
   }
 }
 saveDb();
+pruneExpired();
 
 // ---------------------------------------------------------------------------
 const app = express();
@@ -117,7 +126,7 @@ function clearSession(req, res) {
 }
 function ensureMonthly(u) {
   const m = ym();
-  if (u.creditsMonth !== m) { u.credits = START_CREDITS; u.creditsMonth = m; saveDb(); }
+  if (u.creditsMonth !== m) { u.credits = db.settings.startCredits; u.creditsMonth = m; saveDb(); }
 }
 function currentUser(req) {
   const c = parseCookies(req);
@@ -175,6 +184,20 @@ function saveInputUrl(d, userId) {
   if (!im) return null;
   return saveMedia(Buffer.from(im.imageBytes, "base64"), (im.mimeType.split("/")[1] || "png").replace("jpeg", "jpg").replace("+xml", ""), userId);
 }
+function pruneExpired() {
+  const cutoff = Date.now() - db.settings.retentionDays * 86400000;
+  let removed = 0;
+  for (const [fid, f] of Object.entries(db.feed)) {
+    if ((f.createdAt || 0) < cutoff) {
+      (f.items || []).forEach(delMediaUrl);
+      (f.inputs || []).forEach(delMediaUrl);
+      delete db.feed[fid];
+      removed++;
+    }
+  }
+  if (removed) { saveDb(); console.log(`Pruned ${removed} generation(s) older than ${db.settings.retentionDays} days.`); }
+  return removed;
+}
 function clientRecord(r) {
   return {
     id: r.id, type: r.type, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
@@ -194,7 +217,7 @@ app.post("/api/login", (req, res) => {
   res.json({ user: publicUser(u) });
 });
 app.post("/api/logout", (req, res) => { clearSession(req, res); res.json({ ok: true }); });
-app.get("/api/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user), keyConfigured: !!ai }));
+app.get("/api/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user), keyConfigured: !!ai, retentionDays: db.settings.retentionDays, pricing: pricingPublic() }));
 app.get("/api/health", (_q, res) => res.json({ ok: true, keyConfigured: !!ai }));
 
 // ---- admin: user management ------------------------------------------------
@@ -209,7 +232,7 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   if (Object.values(db.users).some((u) => u.email === email)) return res.status(409).json({ error: "That email already exists." });
   const id = rid();
   const { salt, hash } = hashPw(password);
-  db.users[id] = { id, email, passwordHash: hash, salt, role: "user", credits: Number.isFinite(+credits) ? Math.max(0, Math.round(+credits)) : START_CREDITS, creditsMonth: ym(), createdAt: Date.now() };
+  db.users[id] = { id, email, passwordHash: hash, salt, role: "user", credits: Number.isFinite(+credits) ? Math.max(0, Math.round(+credits)) : db.settings.startCredits, creditsMonth: ym(), createdAt: Date.now() };
   saveDb();
   res.json({ user: publicUser(db.users[id]) });
 });
@@ -233,6 +256,24 @@ app.post("/api/admin/users/:id/credits", requireAdmin, (req, res) => {
   res.json({ user: publicUser(u) });
 });
 
+function pricingPublic() {
+  const s = db.settings;
+  return { startCredits: s.startCredits, imageCost: s.imageCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, retentionDays: s.retentionDays };
+}
+app.get("/api/admin/settings", requireAdmin, (req, res) => res.json({ settings: db.settings }));
+app.post("/api/admin/settings", requireAdmin, (req, res) => {
+  const allowed = ["startCredits", "imageCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "retentionDays"];
+  const b = req.body || {};
+  for (const k of allowed) {
+    if (b[k] == null || !Number.isFinite(+b[k])) continue;
+    let v = +b[k];
+    if (k !== "hdMultiplier") v = Math.round(v);
+    db.settings[k] = Math.max(k === "hdMultiplier" ? 1 : 0, v);
+  }
+  saveDb();
+  res.json({ settings: db.settings });
+});
+
 // ---- media serving (owner or admin only) -----------------------------------
 app.get("/media/:file", requireAuth, (req, res) => {
   const fn = path.basename(req.params.file);
@@ -246,8 +287,9 @@ app.get("/media/:file", requireAuth, (req, res) => {
 
 // ---- feed ------------------------------------------------------------------
 app.get("/api/feed", requireAuth, (req, res) => {
+  pruneExpired();
   const feed = Object.values(db.feed).filter((f) => f.userId === req.user.id).sort((a, b) => b.createdAt - a.createdAt).map(clientRecord);
-  res.json({ feed, user: publicUser(req.user) });
+  res.json({ feed, user: publicUser(req.user), retentionDays: db.settings.retentionDays, pricing: pricingPublic() });
 });
 app.delete("/api/feed/:id", requireAuth, (req, res) => {
   const r = db.feed[req.params.id];
@@ -266,7 +308,7 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
     const { prompt, count = 1, aspectRatio = "1:1", references = [] } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
-    if (u.credits < IMAGE_COST * n) return res.status(402).json({ error: `Not enough credits — this needs ${IMAGE_COST * n}, you have ${u.credits}.` });
+    if (u.credits < db.settings.imageCost * n) return res.status(402).json({ error: `Not enough credits — this needs ${db.settings.imageCost * n}, you have ${u.credits}.` });
 
     const refData = (references || []).filter((d) => typeof d === "string" && d.startsWith("data:")).slice(0, 5);
     const refParts = refData.map(toInlineImage).filter(Boolean);
@@ -284,7 +326,7 @@ app.post("/api/generate-image", requireAuth, async (req, res) => {
       }
     }
     if (!items.length) return res.status(502).json({ error: "The model returned no image (it may have been safety-filtered). Try a different prompt." });
-    charge(u, IMAGE_COST * items.length);
+    charge(u, db.settings.imageCost * items.length);
     const inputs = refData.map((d) => saveInputUrl(d, u.id)).filter(Boolean);
     const r = { id: rid(), userId: u.id, type: "image", genMode: null, prompt, aspect: aspectRatio, count: items.length, items, inputs, upscaled: items.map(() => false), status: "done", createdAt: Date.now() };
     db.feed[r.id] = r; saveDb();
@@ -305,7 +347,7 @@ app.post("/api/upscale-image", requireAuth, async (req, res) => {
   const i = Number(idx);
   const url = r.items && r.items[i];
   if (!url || !url.startsWith("/media/")) return res.status(400).json({ error: "Nothing to upscale." });
-  if (u.credits < IMAGE_COST) return res.status(402).json({ error: `Not enough credits — upscaling needs ${IMAGE_COST}.` });
+  if (u.credits < db.settings.upscaleCost) return res.status(402).json({ error: `Not enough credits — upscaling needs ${db.settings.upscaleCost}.` });
   try {
     const buf = fs.readFileSync(path.join(MEDIA_DIR, url.slice(7)));
     const img = { inlineData: { mimeType: "image/png", data: buf.toString("base64") } };
@@ -324,7 +366,7 @@ app.post("/api/upscale-image", requireAuth, async (req, res) => {
     r.items[i] = newUrl;
     r.upscaled = r.upscaled || [];
     r.upscaled[i] = true;
-    charge(u, IMAGE_COST);
+    charge(u, db.settings.upscaleCost);
     saveDb();
     res.json({ url: newUrl, credits: u.credits });
   } catch (err) {
@@ -339,11 +381,12 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
   if (!ai) return res.status(503).json({ error: "Server has no GEMINI_API_KEY configured." });
   const u = req.user;
   try {
-    const { mode = "video", prompt, aspectRatio = "16:9", duration = 8, negativePrompt = "", resolution = "1080p", frames = [], references = [], count = 1, model = "fast" } = req.body || {};
+    const { mode = "video", prompt, aspectRatio = "16:9", duration = 8, negativePrompt = "", resolution = "720p", frames = [], references = [], count = 1, model = "fast" } = req.body || {};
     if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
     const n = Math.max(1, Math.min(Number(count) || 1, 4));
     const modelKey = model === "lite" ? "lite" : "fast";
-    const perClip = VIDEO_COST[modelKey];
+    const base = modelKey === "lite" ? db.settings.videoLite : db.settings.videoFast;
+    const perClip = Math.round(base * (resolution === "1080p" ? db.settings.hdMultiplier : 1));
     if (u.credits < perClip * n) return res.status(402).json({ error: `Not enough credits — this needs ${perClip * n}, you have ${u.credits}.` });
 
     const config = { aspectRatio: aspectRatio === "9:16" ? "9:16" : "16:9", resolution, durationSeconds: Math.max(4, Math.min(Number(duration) || 8, 8)) };
@@ -428,6 +471,8 @@ app.get("/api/video-status", requireAuth, async (req, res) => {
 
 // ---- static (login page + app) ---------------------------------------------
 app.use(express.static(path.join(__dirname, "public")));
+
+setInterval(pruneExpired, 6 * 60 * 60 * 1000); // prune every 6h
 
 app.listen(PORT, () => {
   console.log(`GENER8 running on http://localhost:${PORT}  (key ${ai ? "configured ✓" : "MISSING ✗"}, data in ${DATA_DIR})`);

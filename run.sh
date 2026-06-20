@@ -10,9 +10,9 @@ if [ -z "$GEMINI_API_KEY" ]; then
   echo "Get one at https://aistudio.google.com/apikey (enable billing — Nano Banana Pro & Veo are paid)."; echo ""
   printf "Paste your Gemini API key and press Enter (or Enter to start without it): "
   read -r KEY_INPUT
-  if [ -n "$KEY_INPUT" ]; then printf 'GEMINI_API_KEY=%s\nADMIN_EMAIL=admin@gener8.app\nADMIN_PASSWORD=change-me\nDATA_DIR=./data\nPORT=3000\n' "$KEY_INPUT" > .env; export GEMINI_API_KEY="$KEY_INPUT"; echo "✓ Saved .env (edit it to set your admin email/password)."; else echo "⚠  Starting without a key."; fi
+  if [ -n "$KEY_INPUT" ]; then printf 'GEMINI_API_KEY=%s\nPORT=3000\n' "$KEY_INPUT" > .env; export GEMINI_API_KEY="$KEY_INPUT"; echo "✓ Saved your key to .env."; else echo "⚠  Starting without a key."; fi
   echo ""
 fi
 if [ ! -d node_modules ]; then echo "▶ Installing dependencies…"; npm install; else echo "▶ Dependencies already installed."; fi
-echo "▶ Starting GENER8… open http://localhost:3000 and sign in as admin."
+echo "▶ Starting server… open http://localhost:3000 (Ctrl+C to stop)."
 exec npm start

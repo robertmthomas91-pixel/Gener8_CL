@@ -210,6 +210,10 @@
           <div class="lbl">Aspect ratio</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap" id="aspectOpts"></div>
         </div>
+        <div id="resWrap" style="display:none">
+          <div class="lbl">Resolution</div>
+          <div style="display:flex;gap:6px" id="resOpts"></div>
+        </div>
         <div id="durationWrap" style="display:none">
           <div class="lbl">Duration</div>
           <div style="display:flex;gap:6px" id="durationOpts"></div>
@@ -227,7 +231,8 @@
       </div>
     </section>
 
-    <h2 style="font-family:'Space Grotesk';font-size:16px;font-weight:700;letter-spacing:-0.01em;margin:0 0 14px;color:var(--text-dim)">Feed</h2>
+    <h2 style="font-family:'Space Grotesk';font-size:16px;font-weight:700;letter-spacing:-0.01em;margin:0 0 4px;color:var(--text-dim)">Feed</h2>
+    <div id="retentionNote" style="font-size:12px;color:var(--text-faint);margin:0 0 14px"></div>
     <div id="feed" style="display:flex;flex-direction:column;gap:20px"></div>
     <div class="empty" id="emptyState">Nothing yet — write a prompt above and hit Generate.</div>
   </main>
@@ -273,13 +278,28 @@
         </form>
         <div id="adminErr" style="color:var(--danger);font-size:12.5px;margin-top:8px;min-height:16px"></div>
       </div>
+      <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">
+        <div class="lbl">Pricing &amp; limits (credits)</div>
+        <form id="adminPricingForm" style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:6px">
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Monthly credits / user<input id="setStart" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Image cost<input id="setImage" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">4K upscale cost<input id="setUpscale" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Lite clip (720p)<input id="setLite" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Fast clip (720p)<input id="setFast" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">1080p multiplier<input id="setHd" type="number" min="1" step="0.1" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Media retention (days)<input id="setRet" type="number" min="1" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <button class="btn-primary" type="submit" style="grid-column:1 / 3;justify-self:start;padding:9px 16px;margin-top:2px">Save pricing</button>
+        </form>
+        <div id="pricingMsg" style="font-size:12px;color:var(--text-faint);margin-top:8px;min-height:16px"></div>
+      </div>
     </div>
   </div>
 
 <script>
 (function(){
-  var state = { mode:'image', videoMode:'video', videoModel:'fast', count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'image' ? 'image' : state.videoMode; }
+  var PRICING = { startCredits:20000, imageCost:2, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, retentionDays:30 };
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
   var VID_ASPECTS = ['16:9','9:16'];
   var COUNTS = [1,2,3,4];
@@ -398,11 +418,14 @@
     document.getElementById('countWrap').style.display = '';
     document.getElementById('videoModes').style.display = state.mode === 'video' ? '' : 'none';
     var isVid = !isImage;
-    document.getElementById('modelName').textContent = isImage ? 'Nano Banana Pro' : ((state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · 1080p · ' + (state.videoModel === 'lite' ? 10 : 20) + ' cr');
+    var vcost = Math.round((state.videoModel === 'lite' ? PRICING.videoLite : PRICING.videoFast) * (state.videoRes === '1080p' ? PRICING.hdMultiplier : 1));
+    document.getElementById('modelName').textContent = isImage ? 'Nano Banana Pro' : ((state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · ' + state.videoRes + ' · ' + vcost + ' cr/clip');
     document.getElementById('modelChevron').style.display = isVid ? '' : 'none';
     document.getElementById('modelPill').style.cursor = isVid ? 'pointer' : 'default';
+    document.getElementById('resWrap').style.display = isVid ? '' : 'none';
+    if (isVid) renderOpts('resOpts', ['720p','1080p'], state.videoRes, function(r){ return r === '1080p' ? '1080p +' : r; }, function(v){ state.videoRes = v; renderControls(); });
     if (!isVid) document.getElementById('modelMenu').style.display = 'none';
-    [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ b.style.background = (b.getAttribute('data-vmodel') === state.videoModel) ? 'var(--accent-soft)' : 'transparent'; });
+    [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); var base=mk==='lite'?PRICING.videoLite:PRICING.videoFast; b.innerHTML=(mk==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')+' <span style="color:var(--text-faint);font-weight:500">'+base+' cr/clip</span>'; b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; });
     [].forEach.call(document.querySelectorAll('#videoModeTabs .tab'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-vmode') === state.videoMode)); });
     var placeholders = {
       image: 'Describe the image you want — subject, style, lighting, composition, mood, colour…',
@@ -457,13 +480,13 @@
     if (rec.slots){ rec.slots.forEach(function(sl,i){ var g = gen.slots[i] || (gen.slots[i]={progress:8}); g.status=sl.status; g.error=sl.error; g.url=(rec.items&&rec.items[i])||null; if(sl.status==='done') g.progress=100; }); }
   }
   function deleteCard(gen){ fetch('/api/feed/'+encodeURIComponent(gen.id), { method:'DELETE' }).then(handleJson).then(function(){ var c=document.getElementById('gen-'+gen.id); if(c) c.remove(); if(!feedEl.children.length) emptyEl.style.display=''; }).catch(function(err){ showBanner(err.message); }); }
-  function loadFeed(){ fetch('/api/feed').then(handleJson).then(function(d){ if(d.user) setAuthUI(d.user); feedEl.innerHTML=''; (d.feed||[]).forEach(function(rec){ feedEl.appendChild(makeCard(recordToGen(rec))); }); emptyEl.style.display = (d.feed && d.feed.length) ? 'none' : ''; }).catch(function(){}); }
-  function init(){ fetch('/api/me').then(function(r){ if(r.status===401){ showLogin(true); throw 'noauth'; } return r.json(); }).then(function(d){ showLogin(false); setAuthUI(d.user); if(!d.keyConfigured) showBanner('No GEMINI_API_KEY on the server yet — set it in Railway → Variables.'); loadFeed(); }).catch(function(){}); }
+  function loadFeed(){ fetch('/api/feed').then(handleJson).then(function(d){ if(d.user) setAuthUI(d.user); if(d.pricing){ PRICING = d.pricing; renderControls(); } feedEl.innerHTML=''; (d.feed||[]).forEach(function(rec){ feedEl.appendChild(makeCard(recordToGen(rec))); }); emptyEl.style.display = (d.feed && d.feed.length) ? 'none' : ''; var rn = document.getElementById('retentionNote'); if (rn) rn.textContent = 'Generations are automatically deleted after ' + (d.retentionDays || 30) + ' days.'; }).catch(function(){}); }
+  function init(){ fetch('/api/me').then(function(r){ if(r.status===401){ showLogin(true); throw 'noauth'; } return r.json(); }).then(function(d){ showLogin(false); setAuthUI(d.user); if(d.pricing) PRICING = d.pricing; renderControls(); if(!d.keyConfigured) showBanner('No GEMINI_API_KEY on the server yet — set it in Railway → Variables.'); loadFeed(); }).catch(function(){}); }
   document.getElementById('loginForm').addEventListener('submit', function(e){ e.preventDefault(); var email=document.getElementById('loginEmail').value.trim(); var password=document.getElementById('loginPass').value; var err=document.getElementById('loginErr'); err.textContent=''; fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:email, password:password }) }).then(handleJson).then(function(d){ showLogin(false); hideBanner(); setAuthUI(d.user); loadFeed(); }).catch(function(e2){ err.textContent = e2.message || 'Login failed'; }); });
   document.getElementById('logoutBtn').onclick = function(){ fetch('/api/logout', { method:'POST' }).then(function(){ location.reload(); }); };
   // ---- admin panel ----
   function refreshMe(){ fetch('/api/me').then(handleJson).then(function(d){ setAuthUI(d.user); }).catch(function(){}); }
-  function openAdmin(){ document.getElementById('adminModal').style.display='flex'; renderAdminUsers(); }
+  function openAdmin(){ document.getElementById('adminModal').style.display='flex'; renderAdminUsers(); loadPricing(); }
   function closeAdmin(){ document.getElementById('adminModal').style.display='none'; }
   function renderAdminUsers(){
     fetch('/api/admin/users').then(handleJson).then(function(d){
@@ -485,6 +508,24 @@
   }
   document.getElementById('adminAddForm').addEventListener('submit', function(e){ e.preventDefault(); var email=document.getElementById('newEmail').value.trim(); var password=document.getElementById('newPass').value; var credits=document.getElementById('newCredits').value; var err=document.getElementById('adminErr'); err.textContent=''; fetch('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password,credits:credits?+credits:undefined})}).then(handleJson).then(function(){ document.getElementById('newEmail').value=''; document.getElementById('newPass').value=''; document.getElementById('newCredits').value=''; renderAdminUsers(); }).catch(function(e2){ err.textContent=e2.message; }); });
   document.getElementById('adminBtn').onclick = openAdmin;
+  function loadPricing(){
+    fetch('/api/admin/settings').then(handleJson).then(function(d){
+      var s = d.settings;
+      document.getElementById('setStart').value = s.startCredits;
+      document.getElementById('setImage').value = s.imageCost;
+      document.getElementById('setUpscale').value = s.upscaleCost;
+      document.getElementById('setLite').value = s.videoLite;
+      document.getElementById('setFast').value = s.videoFast;
+      document.getElementById('setHd').value = s.hdMultiplier;
+      document.getElementById('setRet').value = s.retentionDays;
+    }).catch(function(){});
+  }
+  document.getElementById('adminPricingForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var body = { startCredits:+document.getElementById('setStart').value, imageCost:+document.getElementById('setImage').value, upscaleCost:+document.getElementById('setUpscale').value, videoLite:+document.getElementById('setLite').value, videoFast:+document.getElementById('setFast').value, hdMultiplier:+document.getElementById('setHd').value, retentionDays:+document.getElementById('setRet').value };
+    var msg = document.getElementById('pricingMsg'); msg.textContent = 'Saving…';
+    fetch('/api/admin/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(handleJson).then(function(d){ PRICING = d.settings; renderControls(); var rn=document.getElementById('retentionNote'); if(rn) rn.textContent='Generations are automatically deleted after '+(d.settings.retentionDays||30)+' days.'; msg.textContent='Saved — new prices apply to new generations and new users right away.'; }).catch(function(err){ msg.textContent = err.message; });
+  });
   document.getElementById('adminClose').onclick = closeAdmin;
   document.getElementById('adminModal').onclick = function(e){ if(e.target===this) closeAdmin(); };
   init();
@@ -665,7 +706,7 @@
   }
   function reuseGeneration(gen){
     document.getElementById('prompt').value = gen.prompt || '';
-    if (gen.type === 'image'){ state.mode = 'image'; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; }
+    if (gen.type === 'image'){ state.mode = 'image'; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; state.videoRes = gen.resolution || '720p'; }
     var np = document.getElementById('negPrompt'); if (np) np.value = gen.neg || '';
     if (gen.neg){ state.advanced = true; var adv = document.getElementById('advanced'); if (adv) adv.style.display = ''; }
     state.imageRefs = []; state.frameImages = []; state.refImages = [];
@@ -733,7 +774,7 @@
       genMode: state.mode === 'image' ? null : state.videoMode,
       count: state.count, aspect: state.aspect, model: state.videoModel,
       duration: 8, // Veo generates 1080p as a fixed 8-second clip
-      resolution: state.mode === 'image' ? null : '1080p',
+      resolution: state.mode === 'image' ? null : state.videoRes,
       neg: negVal,
       imageRefs: m === 'image' ? state.imageRefs.filter(Boolean) : [],
       frames: m === 'frames' ? [state.frameImages[0], state.frameImages[1]].filter(Boolean) : [],
