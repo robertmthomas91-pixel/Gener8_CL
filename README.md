@@ -102,8 +102,8 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
 |---|---|---|---|
 | **Image** | — | Nano Banana 2 (default) / Pro | prompt **+ up to 5 reference images** → up to 4 images |
 | **Video** | Text → Video | Veo 3.1 **Fast or Lite** | prompt → up to 4 videos |
-| **Video** | Image → Video | Veo 3.1 Fast | an input image (+ optional end frame) + prompt → up to 4 videos |
-| **Video** | Ingredients | Veo 3.1 Fast | up to 3 reference images + prompt → up to 4 videos (always 8s) |
+| **Video** | Image → Video | Veo 3.1 **Fast or Lite** | input image (+ optional end frame) + prompt → up to 4 videos. **Lite** ignores the end frame (greyed out) — first frame only. |
+| **Video** | Ingredients | Veo 3.1 **Fast or Lite** | **Fast:** up to 3 reference images. **Lite:** a single image only (inputs 2–3 greyed out), animated as image→video since Lite can't use reference images. Always 8s. |
 | **VO** | — | ElevenLabs TTS | text + a **searchable voice library** (with audio previews) → an audio clip |
 | **Music** | — | ElevenLabs Music | prompt + length (60/90/120s) → a music track |
 

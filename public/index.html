@@ -326,7 +326,7 @@
   var state = { mode:'image', imageModel:'std', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
   var PRICING = { startCredits:20000, imageCost:2, imageProCost:4, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
-  function modelOptHtml(attr, key, label, costLabel, top){ return '<button type="button" class="modelOpt" data-'+attr+'="'+key+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:pointer'+(top?';border-top:1px solid var(--border)':'')+'">'+label+' <span style="color:var(--text-faint);font-weight:500">'+costLabel+'</span></button>'; }
+  function modelOptHtml(attr, key, label, costLabel, top, disabled){ return '<button type="button" class="modelOpt"'+(disabled?' data-disabled="1"':'')+' data-'+attr+'="'+key+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:'+(disabled?'not-allowed':'pointer')+(disabled?';opacity:0.45':'')+(top?';border-top:1px solid var(--border)':'')+'">'+label+' <span style="color:var(--text-faint);font-weight:500">'+costLabel+'</span></button>'; }
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
   var VID_ASPECTS = ['16:9','9:16'];
   var COUNTS = [1,2,3,4];
@@ -392,6 +392,10 @@
     return '<button data-add="'+kind+':'+index+'" style="width:92px;height:92px;border-radius:11px;border:1.5px dashed var(--border-strong);background:var(--chip);color:var(--text-faint);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;font-weight:600">'
       + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'+label+'</button>';
   }
+  function slotDisabled(label){
+    return '<div title="Veo Lite supports a single image — switch to Fast to use this" style="width:92px;height:92px;border-radius:11px;border:1.5px dashed var(--border);background:var(--chip);color:var(--text-faint);opacity:0.4;cursor:not-allowed;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;font-weight:600;text-align:center;padding:0 4px">'
+      + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'+label+'</div>';
+  }
   function renderInputs(){
     var area = document.getElementById('inputsArea');
     var m = effMode();
@@ -409,13 +413,14 @@
         + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
         + (state.frameImages[0] ? slotFilled(state.frameImages[0],'Input','frame',0) : slotEmpty('Input image','frame',0))
         + '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
-        + (state.frameImages[1] ? slotFilled(state.frameImages[1],'End','frame',1) : slotEmpty('End (opt)','frame',1))
+        + ((state.mode==='video' && state.videoModel==='lite') ? slotDisabled('End · Fast only') : (state.frameImages[1] ? slotFilled(state.frameImages[1],'End','frame',1) : slotEmpty('End (opt)','frame',1)))
         + '<span style="font-size:12px;color:var(--text-faint);max-width:230px">Upload an image to animate (or use “Use for video” on a generated image), plus an optional end frame to interpolate to.</span>'
         + '</div>';
     } else if (m === 'ingredients'){
       area.style.display = '';
       var slots = '';
       for (var i=0;i<3;i++){
+        if (state.mode==='video' && state.videoModel==='lite' && i>=1){ slots += slotDisabled('Fast only'); continue; }
         slots += state.refImages[i] ? slotFilled(state.refImages[i],'Ref '+(i+1),'ref',i) : slotEmpty('Add image','ref',i);
       }
       area.innerHTML = '<div class="lbl">Ingredients → Video · up to 3 reference images</div>'
@@ -441,6 +446,7 @@
     var m = effMode();
     var isImage = state.mode === 'image';
     var isVideo = state.mode === 'video';
+    if (isVideo && state.videoModel === 'lite'){ if (state.videoMode === 'frames') state.frameImages[1] = null; if (state.videoMode === 'ingredients') state.refImages = state.refImages.filter(Boolean).slice(0,1); }
     var isVO = state.mode === 'vo';
     var isMusic = state.mode === 'music';
     state.duration = 8;

@@ -528,13 +528,16 @@ app.post("/api/generate-video", requireAuth, async (req, res) => {
       const first = toImage(frames[0]);
       if (!first) return res.status(400).json({ error: "Image → Video needs an input image." });
       params.image = first;
-      const last = toImage(frames[1]);
-      if (last) config.lastFrame = last;
+      if (modelKey !== "lite") { const last = toImage(frames[1]); if (last) config.lastFrame = last; } // Lite has no last-frame support
       config.personGeneration = "allow_adult";
     } else if (mode === "ingredients") {
       const refs = (references || []).map(toImage).filter(Boolean).slice(0, 3);
       if (!refs.length) return res.status(400).json({ error: "Ingredients needs at least one reference image." });
-      config.referenceImages = refs.map((im) => ({ image: im, referenceType: "asset" }));
+      if (modelKey === "lite") {
+        params.image = refs[0]; // Lite doesn't support reference images; animate the single image instead
+      } else {
+        config.referenceImages = refs.map((im) => ({ image: im, referenceType: "asset" }));
+      }
       config.durationSeconds = 8;
       config.personGeneration = "allow_adult";
     }
