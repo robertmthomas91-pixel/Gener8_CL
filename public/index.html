@@ -504,7 +504,7 @@
     state.advanced = !state.advanced;
     document.getElementById('advanced').style.display = state.advanced ? '' : 'none';
   };
-  document.getElementById('modelPill').onclick = function(e){ var em = effMode(); if (em !== 'image' && em !== 'video') return; e.stopPropagation(); var mm = document.getElementById('modelMenu'); mm.style.display = (mm.style.display === 'none' || !mm.style.display) ? 'block' : 'none'; };
+  document.getElementById('modelPill').onclick = function(e){ if (state.mode !== 'image' && state.mode !== 'video') return; e.stopPropagation(); var mm = document.getElementById('modelMenu'); mm.style.display = (mm.style.display === 'none' || !mm.style.display) ? 'block' : 'none'; };
   document.addEventListener('click', function(e){ var mm = document.getElementById('modelMenu'); if (mm && mm.style.display !== 'none' && !e.target.closest('#modelMenu') && !e.target.closest('#modelPill')) mm.style.display = 'none'; });
 
   function showBanner(msg){ bannerEl.textContent = msg; bannerEl.classList.add('show'); }
