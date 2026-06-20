@@ -1,9 +1,11 @@
 # GENER8
 
-A multi-user web app for generating images and video with Google's Gemini models:
+A multi-user web app for generating **images, video, voiceover, and music**:
 
 - **Images** — Nano Banana Pro (`gemini-3-pro-image-preview`)
-- **Video** — Veo 3.1 Fast (`veo-3.1-fast-generate-preview`)
+- **Video** — Veo 3.1 Fast/Lite (`veo-3.1-fast-generate-preview` / `veo-3.1-lite-generate-preview`)
+- **Voiceover** — ElevenLabs text-to-speech (`eleven_multilingual_v2`)
+- **Music** — ElevenLabs Music
 
 The Gemini API key lives **only on the server** (as an environment variable) and is never exposed to the browser. The front-end talks only to this app's own `/api/*` endpoints, which add the key and forward to Google.
 
@@ -35,8 +37,9 @@ Browser (UI)  ──>  this server /api/*  ──>  Google Gemini API
    | `ADMIN_EMAIL` | *the email for your first admin login* |
    | `ADMIN_PASSWORD` | *a strong password for that admin* |
    | `DATA_DIR` | `/data` *(the volume mount path)* |
+   | `ELEVENLABS_API_KEY` | *optional — enables the Voiceover & Music tabs (paid ElevenLabs plan)* |
 
-   The key and passwords live only here — never in the code or git.
+   The keys and passwords live only here — never in the code or git.
 6. Railway sets `PORT` automatically. Deploy, open the generated URL, and sign in with your `ADMIN_EMAIL` / `ADMIN_PASSWORD`. (If you didn't set `ADMIN_PASSWORD`, check the deploy logs for the generated one.)
 
 > **A volume is required** for a single-instance service like this. Without it, Railway's filesystem is wiped on every redeploy and you'd lose users and the feed. Keep the service at **1 replica** (a volume can't be shared across replicas).
@@ -87,7 +90,7 @@ Video jobs are tracked in memory, which is fine for a single Railway instance. I
   | **Veo 3.1 Fast** | 20 | 30 |
 
   Defaults are **Lite + 720p** (cheapest). A 4K image upscale costs 4. Balances **reset to the monthly grant on the 1st of each month**; the admin can top up or set any balance.
-- **Admin‑editable pricing.** The monthly credit grant, every per‑action credit cost (image, 4K upscale, Lite/Fast base, the 1080p multiplier) and the media‑retention window are all editable from **Admin → Pricing & limits** — changes apply immediately, no redeploy. Defaults: 20,000 grant · image 2 · upscale 4 · Lite 10 / Fast 20 (720p) · 1080p ×1.5 · 30‑day retention.
+- **Admin‑editable pricing.** The monthly credit grant and every per‑action credit cost — image, 4K upscale, Lite/Fast base, the 1080p multiplier, **voiceover, music** — plus the media‑retention window are all editable from **Admin → Pricing & limits** — changes apply immediately, no redeploy. Defaults: 20,000 grant · image 2 · upscale 4 · Lite 10 / Fast 20 (720p) · 1080p ×1.5 · voiceover 2 · music 10 · 30‑day retention.
 - **Persistent feed.** Generated images and videos are saved on the server (under `DATA_DIR`) and reload from `/api/feed`, so your feed survives page refreshes and redeploys. Each item is private to its owner (and the admin). Hover an item to **delete** it from the feed.
 - **Security notes.** Passwords are hashed (scrypt) and never stored in plain text; sessions are http-only cookies. This is a straightforward auth system, not a security-audited product — use HTTPS (Railway provides it), set a strong `ADMIN_PASSWORD`, and rotate it if needed.
 
@@ -101,6 +104,8 @@ There are two top-level tabs — **Image** and **Video** — and the video tab h
 | **Video** | Text → Video | Veo 3.1 **Fast or Lite** | prompt → up to 4 videos |
 | **Video** | Image → Video | Veo 3.1 Fast | an input image (+ optional end frame) + prompt → up to 4 videos |
 | **Video** | Ingredients | Veo 3.1 Fast | up to 3 reference images + prompt → up to 4 videos (always 8s) |
+| **VO** | — | ElevenLabs TTS | text + a **searchable voice picker** → an audio clip |
+| **Music** | — | ElevenLabs Music | prompt + length (15/30/60s) → a music track |
 
 ## Working with results
 

@@ -172,6 +172,14 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
             Video
           </button>
+          <button class="tab" role="tab" aria-selected="false" data-mode="vo">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            VO
+          </button>
+          <button class="tab" role="tab" aria-selected="false" data-mode="music">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>
+            Music
+          </button>
         </div>
         <div style="position:relative">
           <button class="pill" id="modelPill" type="button" style="font-weight:600;cursor:default;border:1px solid var(--border)">
@@ -206,13 +214,24 @@
           <div class="lbl">Outputs</div>
           <div style="display:flex;gap:6px" id="countOpts"></div>
         </div>
-        <div>
+        <div id="aspectWrap">
           <div class="lbl">Aspect ratio</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap" id="aspectOpts"></div>
         </div>
         <div id="resWrap" style="display:none">
           <div class="lbl">Resolution</div>
           <div style="display:flex;gap:6px" id="resOpts"></div>
+        </div>
+        <div id="voWrap" style="display:none">
+          <div class="lbl">Voice</div>
+          <div style="position:relative">
+            <input id="voiceSearch" type="text" autocomplete="off" placeholder="Search voices…" style="padding:8px 11px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;min-width:190px" />
+            <div id="voiceList" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:60;min-width:230px;max-height:260px;overflow:auto;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-lg)"></div>
+          </div>
+        </div>
+        <div id="musicWrap" style="display:none">
+          <div class="lbl">Length</div>
+          <div style="display:flex;gap:6px" id="musicOpts"></div>
         </div>
         <div id="durationWrap" style="display:none">
           <div class="lbl">Duration</div>
@@ -286,6 +305,8 @@
           <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">4K upscale cost<input id="setUpscale" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
           <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Lite clip (720p)<input id="setLite" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
           <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Fast clip (720p)<input id="setFast" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Voiceover cost<input id="setVo" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
+          <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Music cost<input id="setMusic" type="number" min="0" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
           <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">1080p multiplier<input id="setHd" type="number" min="1" step="0.1" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
           <label style="font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:4px">Media retention (days)<input id="setRet" type="number" min="1" style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none"/></label>
           <button class="btn-primary" type="submit" style="grid-column:1 / 3;justify-self:start;padding:9px 16px;margin-top:2px">Save pricing</button>
@@ -297,9 +318,9 @@
 
 <script>
 (function(){
-  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
-  function effMode(){ return state.mode === 'image' ? 'image' : state.videoMode; }
-  var PRICING = { startCredits:20000, imageCost:2, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, retentionDays:30 };
+  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', musicLen:30000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
+  var PRICING = { startCredits:20000, imageCost:2, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
   var VID_ASPECTS = ['16:9','9:16'];
   var COUNTS = [1,2,3,4];
@@ -413,27 +434,40 @@
     renderOpts('durationOpts', DURATIONS, state.duration, function(d){ return d + 's'; }, function(v){ state.duration = v; renderControls(); });
     var m = effMode();
     var isImage = state.mode === 'image';
-    state.duration = 8; // video is generated at 1080p, which is a fixed 8-second clip
-    document.getElementById('durationWrap').style.display = 'none'; // no duration choice at 1080p
-    document.getElementById('countWrap').style.display = '';
-    document.getElementById('videoModes').style.display = state.mode === 'video' ? '' : 'none';
-    var isVid = !isImage;
-    var vcost = Math.round((state.videoModel === 'lite' ? PRICING.videoLite : PRICING.videoFast) * (state.videoRes === '1080p' ? PRICING.hdMultiplier : 1));
-    document.getElementById('modelName').textContent = isImage ? 'Nano Banana Pro' : ((state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · ' + state.videoRes + ' · ' + vcost + ' cr/clip');
-    document.getElementById('modelChevron').style.display = isVid ? '' : 'none';
-    document.getElementById('modelPill').style.cursor = isVid ? 'pointer' : 'default';
-    document.getElementById('resWrap').style.display = isVid ? '' : 'none';
-    if (isVid) renderOpts('resOpts', ['720p','1080p'], state.videoRes, function(r){ return r === '1080p' ? '1080p +' : r; }, function(v){ state.videoRes = v; renderControls(); });
-    if (!isVid) document.getElementById('modelMenu').style.display = 'none';
-    [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); var base=mk==='lite'?PRICING.videoLite:PRICING.videoFast; b.innerHTML=(mk==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')+' <span style="color:var(--text-faint);font-weight:500">'+base+' cr/clip</span>'; b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; });
+    var isVideo = state.mode === 'video';
+    var isVO = state.mode === 'vo';
+    var isMusic = state.mode === 'music';
+    state.duration = 8;
+    document.getElementById('durationWrap').style.display = 'none';
+    document.getElementById('countWrap').style.display = isImage ? '' : 'none';
+    document.getElementById('aspectWrap').style.display = (isImage || isVideo) ? '' : 'none';
+    document.getElementById('videoModes').style.display = isVideo ? '' : 'none';
+    document.getElementById('resWrap').style.display = isVideo ? '' : 'none';
+    document.getElementById('voWrap').style.display = isVO ? '' : 'none';
+    document.getElementById('musicWrap').style.display = isMusic ? '' : 'none';
+    var pillText, pillClickable = false;
+    if (isImage) pillText = 'Nano Banana Pro';
+    else if (isVideo){ var vcost = Math.round((state.videoModel === 'lite' ? PRICING.videoLite : PRICING.videoFast) * (state.videoRes === '1080p' ? PRICING.hdMultiplier : 1)); pillText = (state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · ' + state.videoRes + ' · ' + vcost + ' cr/clip'; pillClickable = true; }
+    else if (isVO) pillText = 'ElevenLabs Voice · ' + PRICING.voCost + ' cr';
+    else pillText = 'ElevenLabs Music · ' + PRICING.musicCost + ' cr';
+    document.getElementById('modelName').textContent = pillText;
+    document.getElementById('modelChevron').style.display = pillClickable ? '' : 'none';
+    document.getElementById('modelPill').style.cursor = pillClickable ? 'pointer' : 'default';
+    if (!pillClickable) document.getElementById('modelMenu').style.display = 'none';
+    if (isVideo) renderOpts('resOpts', ['720p','1080p'], state.videoRes, function(r){ return r === '1080p' ? '1080p +' : r; }, function(v){ state.videoRes = v; renderControls(); });
+    if (isVideo) [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); var base=mk==='lite'?PRICING.videoLite:PRICING.videoFast; b.innerHTML=(mk==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')+' <span style="color:var(--text-faint);font-weight:500">'+base+' cr/clip</span>'; b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; });
+    if (isMusic) renderOpts('musicOpts', [15,30,60], Math.round(state.musicLen/1000), function(d){ return d + 's'; }, function(v){ state.musicLen = v*1000; renderControls(); });
+    if (isVO){ var vsi = document.getElementById('voiceSearch'); if (vsi && document.activeElement !== vsi) vsi.value = voiceName(state.voiceId); }
     [].forEach.call(document.querySelectorAll('#videoModeTabs .tab'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-vmode') === state.videoMode)); });
     var placeholders = {
       image: 'Describe the image you want — subject, style, lighting, composition, mood, colour…',
       video: 'Describe the video — action, camera movement, environment, lighting, pacing…',
       frames: 'Describe the motion — “slow zoom in”, “hair blows in the wind”, “camera orbits the subject”…',
-      ingredients: 'Describe the action and scene that ties your reference images together…'
+      ingredients: 'Describe the action and scene that ties your reference images together…',
+      vo: 'Type the text you want spoken — punctuation and line breaks shape the delivery…',
+      music: 'Describe the music — genre, mood, instruments, tempo, energy…'
     };
-    document.getElementById('prompt').placeholder = placeholders[m];
+    document.getElementById('prompt').placeholder = placeholders[m] || placeholders.image;
     renderInputs();
   }
   renderControls();
@@ -471,7 +505,7 @@
   function showLogin(show){ document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none'; }
   function timeAgo(ts){ if(!ts) return 'just now'; var sec=Math.floor((Date.now()-ts)/1000); if(sec<60) return 'just now'; var m=Math.floor(sec/60); if(m<60) return m+' min ago'; var h=Math.floor(m/60); if(h<24) return h+'h ago'; return Math.floor(h/24)+'d ago'; }
   function recordToGen(rec){
-    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
+    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, subtype: rec.subtype || null, voice: rec.voice || null, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
     if (rec.slots){ g.slots = rec.slots.map(function(sl,i){ return { status: sl.status, error: sl.error, url: (rec.items&&rec.items[i])||null, progress: sl.status==='done'?100:(sl.status==='error'?0:8) }; }); }
     return g;
   }
@@ -481,8 +515,8 @@
   }
   function deleteCard(gen){ fetch('/api/feed/'+encodeURIComponent(gen.id), { method:'DELETE' }).then(handleJson).then(function(){ var c=document.getElementById('gen-'+gen.id); if(c) c.remove(); if(!feedEl.children.length) emptyEl.style.display=''; }).catch(function(err){ showBanner(err.message); }); }
   function loadFeed(){ fetch('/api/feed').then(handleJson).then(function(d){ if(d.user) setAuthUI(d.user); if(d.pricing){ PRICING = d.pricing; renderControls(); } feedEl.innerHTML=''; (d.feed||[]).forEach(function(rec){ feedEl.appendChild(makeCard(recordToGen(rec))); }); emptyEl.style.display = (d.feed && d.feed.length) ? 'none' : ''; var rn = document.getElementById('retentionNote'); if (rn) rn.textContent = 'Generations are automatically deleted after ' + (d.retentionDays || 30) + ' days.'; }).catch(function(){}); }
-  function init(){ fetch('/api/me').then(function(r){ if(r.status===401){ showLogin(true); throw 'noauth'; } return r.json(); }).then(function(d){ showLogin(false); setAuthUI(d.user); if(d.pricing) PRICING = d.pricing; renderControls(); if(!d.keyConfigured) showBanner('No GEMINI_API_KEY on the server yet — set it in Railway → Variables.'); loadFeed(); }).catch(function(){}); }
-  document.getElementById('loginForm').addEventListener('submit', function(e){ e.preventDefault(); var email=document.getElementById('loginEmail').value.trim(); var password=document.getElementById('loginPass').value; var err=document.getElementById('loginErr'); err.textContent=''; fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:email, password:password }) }).then(handleJson).then(function(d){ showLogin(false); hideBanner(); setAuthUI(d.user); loadFeed(); }).catch(function(e2){ err.textContent = e2.message || 'Login failed'; }); });
+  function init(){ fetch('/api/me').then(function(r){ if(r.status===401){ showLogin(true); throw 'noauth'; } return r.json(); }).then(function(d){ showLogin(false); setAuthUI(d.user); if(d.pricing) PRICING = d.pricing; renderControls(); if(d.elevenConfigured) loadVoices(); if(!d.keyConfigured) showBanner('No GEMINI_API_KEY on the server yet — set it in Railway → Variables.'); loadFeed(); }).catch(function(){}); }
+  document.getElementById('loginForm').addEventListener('submit', function(e){ e.preventDefault(); var email=document.getElementById('loginEmail').value.trim(); var password=document.getElementById('loginPass').value; var err=document.getElementById('loginErr'); err.textContent=''; fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:email, password:password }) }).then(handleJson).then(function(d){ showLogin(false); hideBanner(); setAuthUI(d.user); loadFeed(); loadVoices(); }).catch(function(e2){ err.textContent = e2.message || 'Login failed'; }); });
   document.getElementById('logoutBtn').onclick = function(){ fetch('/api/logout', { method:'POST' }).then(function(){ location.reload(); }); };
   // ---- admin panel ----
   function refreshMe(){ fetch('/api/me').then(handleJson).then(function(d){ setAuthUI(d.user); }).catch(function(){}); }
@@ -516,22 +550,53 @@
       document.getElementById('setUpscale').value = s.upscaleCost;
       document.getElementById('setLite').value = s.videoLite;
       document.getElementById('setFast').value = s.videoFast;
+      document.getElementById('setVo').value = s.voCost;
+      document.getElementById('setMusic').value = s.musicCost;
       document.getElementById('setHd').value = s.hdMultiplier;
       document.getElementById('setRet').value = s.retentionDays;
     }).catch(function(){});
   }
   document.getElementById('adminPricingForm').addEventListener('submit', function(e){
     e.preventDefault();
-    var body = { startCredits:+document.getElementById('setStart').value, imageCost:+document.getElementById('setImage').value, upscaleCost:+document.getElementById('setUpscale').value, videoLite:+document.getElementById('setLite').value, videoFast:+document.getElementById('setFast').value, hdMultiplier:+document.getElementById('setHd').value, retentionDays:+document.getElementById('setRet').value };
+    var body = { startCredits:+document.getElementById('setStart').value, imageCost:+document.getElementById('setImage').value, upscaleCost:+document.getElementById('setUpscale').value, videoLite:+document.getElementById('setLite').value, videoFast:+document.getElementById('setFast').value, hdMultiplier:+document.getElementById('setHd').value, voCost:+document.getElementById('setVo').value, musicCost:+document.getElementById('setMusic').value, retentionDays:+document.getElementById('setRet').value };
     var msg = document.getElementById('pricingMsg'); msg.textContent = 'Saving…';
     fetch('/api/admin/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(handleJson).then(function(d){ PRICING = d.settings; renderControls(); var rn=document.getElementById('retentionNote'); if(rn) rn.textContent='Generations are automatically deleted after '+(d.settings.retentionDays||30)+' days.'; msg.textContent='Saved — new prices apply to new generations and new users right away.'; }).catch(function(err){ msg.textContent = err.message; });
   });
   document.getElementById('adminClose').onclick = closeAdmin;
   document.getElementById('adminModal').onclick = function(e){ if(e.target===this) closeAdmin(); };
+  var VOICES = [];
+  function voiceName(id){ var v = VOICES.find(function(x){ return x.id === id; }); return v ? v.name : ''; }
+  function renderVoiceList(filter){
+    var list = document.getElementById('voiceList'); if (!list) return;
+    var f = (filter||'').toLowerCase();
+    var matches = VOICES.filter(function(v){ return v.name.toLowerCase().indexOf(f) >= 0; }).slice(0, 60);
+    list.innerHTML = matches.length ? matches.map(function(v){
+      return '<div class="voiceOpt" data-vid="'+v.id+'" style="padding:9px 12px;cursor:pointer;font-size:13px;color:var(--text)'+(v.id===state.voiceId?';background:var(--accent-soft)':'')+'">'+escapeHtml(v.name)+'</div>';
+    }).join('') : '<div style="padding:9px 12px;font-size:13px;color:var(--text-faint)">No voices found</div>';
+    [].forEach.call(list.querySelectorAll('.voiceOpt'), function(el){
+      el.onmousedown = function(e){ e.preventDefault(); state.voiceId = el.getAttribute('data-vid'); document.getElementById('voiceSearch').value = voiceName(state.voiceId); list.style.display = 'none'; };
+    });
+  }
+  function loadVoices(){
+    fetch('/api/voices').then(handleJson).then(function(d){
+      VOICES = d.voices || [];
+      if (VOICES.length && !state.voiceId) state.voiceId = VOICES[0].id;
+      var si = document.getElementById('voiceSearch'); if (si && state.voiceId) si.value = voiceName(state.voiceId);
+      renderVoiceList('');
+    }).catch(function(){});
+  }
+  (function(){
+    var si = document.getElementById('voiceSearch'); var list = document.getElementById('voiceList');
+    if (!si) return;
+    si.addEventListener('focus', function(){ renderVoiceList(''); si.select(); list.style.display = 'block'; });
+    si.addEventListener('input', function(){ renderVoiceList(si.value); list.style.display = 'block'; });
+    si.addEventListener('keydown', function(e){ if (e.key === 'Escape'){ list.style.display = 'none'; si.blur(); } });
+    document.addEventListener('click', function(e){ if (list && list.style.display !== 'none' && !e.target.closest('#voWrap')){ list.style.display = 'none'; si.value = voiceName(state.voiceId); } });
+  })();
   init();
 
   // ---- feed rendering ----
-  function aspectCss(a){ var p = a.split(':'); return p[0] + ' / ' + p[1]; }
+  function aspectCss(a){ if (!a) return '1 / 1'; var p = a.split(':'); return p[0] + ' / ' + p[1]; }
   function gridCols(type, count){ if (type === 'video') return count > 1 ? '1fr 1fr' : '1fr'; return count >= 2 ? '1fr 1fr' : '1fr'; }
 
   function makeCard(gen){
@@ -545,7 +610,15 @@
     var cols = gridCols(gen.type, gen.type === 'video' ? (gen.count || 1) : gen.count);
     var media = '<div class="media" style="grid-template-columns:' + cols + '">';
     var cellAspect = aspectCss(gen.aspect);
-    if (gen.type === 'video' && gen.slots){
+    if (gen.type === 'audio'){
+      if (gen.status === 'generating'){
+        media += '<div class="cell" style="aspect-ratio:3 / 1;display:flex;align-items:center;justify-content:center;gap:10px"><div class="spinner"></div><span style="color:var(--text-dim);font-size:13px">Generating '+(gen.subtype==='music'?'music':'voiceover')+'…</span></div>';
+      } else if (gen.status === 'error'){
+        media += '<div class="cell" style="aspect-ratio:3 / 1;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center"><span style="color:var(--danger);font-size:13px;font-weight:600">'+escapeHtml(gen.error||'Generation failed')+'</span></div>';
+      } else {
+        media += '<div style="display:flex;flex-direction:column;gap:12px;padding:10px 6px"><div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(140deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:#fff;flex:0 0 auto">'+(gen.subtype==='music'?SVG_MUSIC:SVG_VOICE)+'</div><div style="font-weight:600;font-size:14px">'+(gen.subtype==='music'?'Music':'Voiceover')+'</div></div><audio controls src="'+gen.items[0]+'" style="width:100%"></audio></div>';
+      }
+    } else if (gen.type === 'video' && gen.slots){
       gen.slots.forEach(function(s,idx){
         if (s.status === 'generating'){
           media += '<div class="cell" style="aspect-ratio:'+cellAspect+';position:relative"><div class="skl"></div><div style="position:absolute;left:0;right:0;bottom:0;height:4px;background:var(--chip)"><div style="height:100%;width:'+(s.progress||10)+'%;background:linear-gradient(90deg,var(--accent),var(--accent-2))"></div></div></div>';
@@ -575,9 +648,13 @@
     meta += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:var(--text-faint)">'+gen.when+'</span>'+((gen.status!=='generating' && String(gen.id).indexOf('tmp-')!==0) ? '<span style="display:flex;gap:6px"><button class="btn-ghost" data-reuse="'+gen.id+'" title="Reuse this prompt and its images" style="padding:3px 9px;font-size:12px">Reuse</button><button class="btn-ghost" data-del="'+gen.id+'" title="Remove from feed" style="padding:3px 8px;font-size:14px;line-height:1">\u00d7</button></span>' : '')+'</div>';
     meta += '<p style="margin:0;font-size:14px;line-height:1.5;color:var(--text)">'+escapeHtml(gen.prompt)+'</p>';
     meta += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
-    meta += '<span class="tag">'+gen.aspect+'</span>';
-    meta += '<span class="tag">'+(gen.type==='video' ? ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · '+(gen.model==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')) : (gen.count+' image'+(gen.count>1?'s':'')+' · Nano Banana Pro'))+'</span>';
-    if (gen.type==='video'){ meta += '<span class="tag">'+({video:'Text→Video',frames:'Frames→Video',ingredients:'Ingredients→Video'}[gen.genMode||'video'])+'</span>'; }
+    if (gen.type === 'audio'){
+      meta += '<span class="tag">'+(gen.subtype==='music' ? ('Music · ElevenLabs'+(gen.duration?' · '+gen.duration+'s':'')) : 'Voiceover · ElevenLabs')+'</span>';
+    } else {
+      meta += '<span class="tag">'+gen.aspect+'</span>';
+      meta += '<span class="tag">'+(gen.type==='video' ? ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · '+(gen.model==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')) : (gen.count+' image'+(gen.count>1?'s':'')+' · Nano Banana Pro'))+'</span>';
+      if (gen.type==='video'){ meta += '<span class="tag">'+({video:'Text→Video',frames:'Frames→Video',ingredients:'Ingredients→Video'}[gen.genMode||'video'])+'</span>'; }
+    }
     meta += '</div>';
 
     if (gen.status === 'generating'){
@@ -595,6 +672,11 @@
       meta += '<div><div class="progress"><div style="width:'+gpct+'%"></div></div><div style="display:flex;justify-content:space-between;margin-top:6px;font-size:12px;color:var(--text-faint)"><span>'+gpct+'%</span><span>'+geta+'</span></div></div>';
     } else if (gen.status === 'error'){
       meta += '<button class="btn-ghost" data-retry="'+gen.id+'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/></svg> Retry</button>';
+    } else if (gen.type === 'audio'){
+      meta += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">';
+      meta += '<button class="btn-ghost" style="justify-content:center" data-dl="0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg> Download</button>';
+      meta += '<button class="btn-ghost" style="justify-content:center" data-retry="'+gen.id+'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/></svg> Regenerate</button>';
+      meta += '</div>';
     } else {
       meta += '<div style="font-size:12px;color:var(--text-faint)">'+(gen.type==='video'?'Hover to expand or download.':'Click an image to enlarge · hover for download / 4K / → video / + ingredient.')+'</div>';
       meta += '<button class="btn-ghost" style="justify-content:center" data-retry="'+gen.id+'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/></svg> Regenerate</button>';
@@ -603,7 +685,7 @@
 
     card.innerHTML = media + meta;
     var retry = card.querySelector('[data-retry]');
-    if (retry) retry.onclick = function(){ runGeneration({ prompt: gen.prompt, type: gen.type, genMode: gen.genMode, count: gen.count, aspect: gen.aspect, duration: gen.duration, neg: gen.neg, imageRefs: gen.imageRefs, frames: gen.frames, references: gen.references }); };
+    if (retry) retry.onclick = function(){ runGeneration({ prompt: gen.prompt, type: (gen.type==='audio'?gen.subtype:gen.type), genMode: gen.genMode, model: gen.model, count: gen.count, aspect: gen.aspect, resolution: gen.resolution, duration: gen.duration, neg: gen.neg, imageRefs: gen.imageRefs, frames: gen.frames, references: gen.references, voiceId: gen.voice, lengthMs: (gen.duration?gen.duration*1000:30000) }); };
     var del = card.querySelector('[data-del]'); if (del) del.onclick = function(){ deleteCard(gen); };
     var ru = card.querySelector('[data-reuse]'); if (ru) ru.onclick = function(){ reuseGeneration(gen); };
     wireItemTools(card, gen);
@@ -618,6 +700,8 @@
   var SVG_VID = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10l6-3v10l-6-3z"/></svg>';
   var SVG_ING = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>';
   var SVG_EXPAND = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5"/></svg>';
+  var SVG_VOICE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+  var SVG_MUSIC = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>';
   function itemTools(gen, idx){
     var done = gen.upscaled && gen.upscaled[idx];
     var t = '<div class="tools">';
@@ -646,7 +730,7 @@
   function downloadItem(gen, idx){
     var src = gen.items[idx]; if (!src) return;
     var a = document.createElement('a');
-    a.href = src; a.download = promptSlug(gen.prompt)+'-'+(idx+1)+(gen.type==='video'?'.mp4':'.png');
+    a.href = src; a.download = promptSlug(gen.prompt)+'-'+(idx+1)+(gen.type==='video'?'.mp4':gen.type==='audio'?'.mp3':'.png');
     document.body.appendChild(a); a.click(); a.remove();
   }
   function upscaleItem(gen, idx, btn){
@@ -706,7 +790,7 @@
   }
   function reuseGeneration(gen){
     document.getElementById('prompt').value = gen.prompt || '';
-    if (gen.type === 'image'){ state.mode = 'image'; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; state.videoRes = gen.resolution || '720p'; }
+    if (gen.type === 'image'){ state.mode = 'image'; } else if (gen.type === 'audio'){ state.mode = gen.subtype === 'music' ? 'music' : 'vo'; if (gen.subtype === 'vo' && gen.voice) state.voiceId = gen.voice; if (gen.subtype === 'music' && gen.duration) state.musicLen = gen.duration * 1000; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; state.videoRes = gen.resolution || '720p'; }
     var np = document.getElementById('negPrompt'); if (np) np.value = gen.neg || '';
     if (gen.neg){ state.advanced = true; var adv = document.getElementById('advanced'); if (adv) adv.style.display = ''; }
     state.imageRefs = []; state.frameImages = []; state.refImages = [];
@@ -736,6 +820,15 @@
       .then(handleJson)
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); tcard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
       .catch(function(err){ tcard.remove(); restoreInputs(snap); showBanner(err.message); });
+    } else if (cfg.type === 'vo' || cfg.type === 'music'){
+      var endpoint = cfg.type === 'vo' ? '/api/generate-vo' : '/api/generate-music';
+      var abody = cfg.type === 'vo' ? { text: cfg.prompt, voiceId: cfg.voiceId } : { prompt: cfg.prompt, lengthMs: cfg.lengthMs };
+      var tmpA = { id:'tmp-'+(++genCounter), type:'audio', subtype:cfg.type, prompt:cfg.prompt, items:[], status:'generating', when:'just now' };
+      var acard = makeCard(tmpA); feedEl.insertBefore(acard, feedEl.firstChild);
+      fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(abody) })
+      .then(handleJson)
+      .then(function(d){ if(d.credits!=null) setCredits(d.credits); acard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
+      .catch(function(err){ acard.remove(); restoreInputs(snap); showBanner(err.message); });
     } else {
       fetch('/api/generate-video', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, duration: cfg.duration, negativePrompt: cfg.neg, resolution: cfg.resolution || '1080p', model: cfg.model || 'fast', frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
@@ -770,7 +863,7 @@
     var snap = { prompt: prompt, neg: negVal, mode: state.mode, videoMode: state.videoMode, imageRefs: state.imageRefs.slice(), frameImages: state.frameImages.slice(), refImages: state.refImages.slice() };
     runGeneration({
       prompt: prompt,
-      type: state.mode === 'image' ? 'image' : 'video',
+      type: state.mode,
       genMode: state.mode === 'image' ? null : state.videoMode,
       count: state.count, aspect: state.aspect, model: state.videoModel,
       duration: 8, // Veo generates 1080p as a fixed 8-second clip
@@ -778,7 +871,9 @@
       neg: negVal,
       imageRefs: m === 'image' ? state.imageRefs.filter(Boolean) : [],
       frames: m === 'frames' ? [state.frameImages[0], state.frameImages[1]].filter(Boolean) : [],
-      references: m === 'ingredients' ? refs : []
+      references: m === 'ingredients' ? refs : [],
+      voiceId: state.voiceId,
+      lengthMs: state.musicLen
     }, snap);
     clearInputs();
   };

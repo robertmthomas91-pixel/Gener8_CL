@@ -30,11 +30,16 @@ const DEFAULT_SETTINGS = {
   videoLite: 10,         // base (720p) credits per Veo Lite clip
   videoFast: 20,         // base (720p) credits per Veo Fast clip
   hdMultiplier: 1.5,     // 1080p premium multiplier
+  voCost: 2,             // credits per voiceover (ElevenLabs TTS)
+  musicCost: 10,         // credits per music track (ElevenLabs Music)
   retentionDays: Number(process.env.RETENTION_DAYS) || 30, // days before auto-delete
 };
 
 const IMAGE_MODEL = "gemini-3-pro-image-preview";   // Nano Banana Pro
 const VIDEO_MODELS = { fast: "veo-3.1-fast-generate-preview", lite: "veo-3.1-lite-generate-preview" };
+const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;               // ElevenLabs voiceover + music
+const ELEVEN_TTS_MODEL = "eleven_multilingual_v2";
+const ELEVEN_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM";             // Rachel (a default voice)
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 if (!API_KEY) {
@@ -200,7 +205,7 @@ function pruneExpired() {
 }
 function clientRecord(r) {
   return {
-    id: r.id, type: r.type, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
+    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
     count: r.count, duration: r.duration, resolution: r.resolution,
     items: r.items, inputs: r.inputs || [], upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
     slots: r.slots ? r.slots.map((s) => ({ status: s.status, error: s.error })) : undefined,
@@ -217,7 +222,75 @@ app.post("/api/login", (req, res) => {
   res.json({ user: publicUser(u) });
 });
 app.post("/api/logout", (req, res) => { clearSession(req, res); res.json({ ok: true }); });
-app.get("/api/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user), keyConfigured: !!ai, retentionDays: db.settings.retentionDays, pricing: pricingPublic() }));
+app.get("/api/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user), keyConfigured: !!ai, elevenConfigured: !!ELEVEN_KEY, retentionDays: db.settings.retentionDays, pricing: pricingPublic() }));
+function requireEleven(res) {
+  if (!ELEVEN_KEY) { res.status(503).json({ error: "Server has no ELEVENLABS_API_KEY configured. Set it in Railway → Variables." }); return false; }
+  return true;
+}
+
+// ---- ElevenLabs voices (for the voiceover voice picker) --------------------
+app.get("/api/voices", requireAuth, async (req, res) => {
+  if (!requireEleven(res)) return;
+  try {
+    const r = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
+    if (!r.ok) return res.status(502).json({ error: "Could not load voices." });
+    const d = await r.json();
+    const voices = (d.voices || []).map((v) => ({ id: v.voice_id, name: v.name })).slice(0, 80);
+    res.json({ voices });
+  } catch (err) { res.status(500).json({ error: err?.message || "Failed to load voices." }); }
+});
+
+// ---- VOICEOVER — ElevenLabs text-to-speech --------------------------------
+app.post("/api/generate-vo", requireAuth, async (req, res) => {
+  if (!requireEleven(res)) return;
+  const u = req.user;
+  try {
+    const { text, voiceId } = req.body || {};
+    if (!text || !text.trim()) return res.status(400).json({ error: "Some text to speak is required." });
+    if (text.length > 5000) return res.status(400).json({ error: "Text is too long (max 5000 characters)." });
+    const cost = db.settings.voCost;
+    if (u.credits < cost) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    const vid = (voiceId && /^[A-Za-z0-9]+$/.test(voiceId)) ? voiceId : ELEVEN_DEFAULT_VOICE;
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${vid}`, {
+      method: "POST",
+      headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
+      body: JSON.stringify({ text, model_id: ELEVEN_TTS_MODEL }),
+    });
+    if (!r.ok) { const t = await r.text(); return res.status(502).json({ error: "Voice generation failed: " + t.slice(0, 200) }); }
+    const ab = await r.arrayBuffer();
+    const url = saveMedia(Buffer.from(ab), "mp3", u.id);
+    charge(u, cost);
+    const rec = { id: rid(), userId: u.id, type: "audio", subtype: "vo", prompt: text, voice: vid, items: [url], inputs: [], status: "done", createdAt: Date.now() };
+    db.feed[rec.id] = rec; saveDb();
+    res.json({ record: clientRecord(rec), credits: u.credits });
+  } catch (err) { console.error("generate-vo:", err); res.status(500).json({ error: err?.message || "Voice generation failed." }); }
+});
+
+// ---- MUSIC — ElevenLabs Music ---------------------------------------------
+app.post("/api/generate-music", requireAuth, async (req, res) => {
+  if (!requireEleven(res)) return;
+  const u = req.user;
+  try {
+    const { prompt, lengthMs } = req.body || {};
+    if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A music prompt is required." });
+    const cost = db.settings.musicCost;
+    if (u.credits < cost) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
+    const len = Math.max(5000, Math.min(Number(lengthMs) || 30000, 120000));
+    const r = await fetch("https://api.elevenlabs.io/v1/music", {
+      method: "POST",
+      headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
+      body: JSON.stringify({ prompt, music_length_ms: len }),
+    });
+    if (!r.ok) { const t = await r.text(); return res.status(502).json({ error: "Music generation failed: " + t.slice(0, 200) }); }
+    const ab = await r.arrayBuffer();
+    const url = saveMedia(Buffer.from(ab), "mp3", u.id);
+    charge(u, cost);
+    const rec = { id: rid(), userId: u.id, type: "audio", subtype: "music", prompt, duration: Math.round(len / 1000), items: [url], inputs: [], status: "done", createdAt: Date.now() };
+    db.feed[rec.id] = rec; saveDb();
+    res.json({ record: clientRecord(rec), credits: u.credits });
+  } catch (err) { console.error("generate-music:", err); res.status(500).json({ error: err?.message || "Music generation failed." }); }
+});
+
 app.get("/api/health", (_q, res) => res.json({ ok: true, keyConfigured: !!ai }));
 
 // ---- admin: user management ------------------------------------------------
@@ -258,11 +331,11 @@ app.post("/api/admin/users/:id/credits", requireAdmin, (req, res) => {
 
 function pricingPublic() {
   const s = db.settings;
-  return { startCredits: s.startCredits, imageCost: s.imageCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, retentionDays: s.retentionDays };
+  return { startCredits: s.startCredits, imageCost: s.imageCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, voCost: s.voCost, musicCost: s.musicCost, retentionDays: s.retentionDays };
 }
 app.get("/api/admin/settings", requireAdmin, (req, res) => res.json({ settings: db.settings }));
 app.post("/api/admin/settings", requireAdmin, (req, res) => {
-  const allowed = ["startCredits", "imageCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "retentionDays"];
+  const allowed = ["startCredits", "imageCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "voCost", "musicCost", "retentionDays"];
   const b = req.body || {};
   for (const k of allowed) {
     if (b[k] == null || !Number.isFinite(+b[k])) continue;
