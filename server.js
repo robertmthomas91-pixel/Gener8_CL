@@ -52,6 +52,7 @@ if (!API_KEY) {
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 let db = loadDb();
 db.settings = { ...DEFAULT_SETTINGS, ...(db.settings || {}) };
+db.voiceAdds = db.voiceAdds || {}; // maps a library voice -> the copy added to the account
 function loadDb() {
   try { return JSON.parse(fs.readFileSync(DB_FILE, "utf8")); }
   catch { return { users: {}, sessions: {}, feed: {}, media: {}, meta: {} }; }
@@ -189,6 +190,23 @@ function saveInputUrl(d, userId) {
   if (!im) return null;
   return saveMedia(Buffer.from(im.imageBytes, "base64"), (im.mimeType.split("/")[1] || "png").replace("jpeg", "jpg").replace("+xml", ""), userId);
 }
+async function resolveVoice(voiceId, ownerId) {
+  // Account voices (no owner) are usable directly. Library voices must be added
+  // to the account first; we cache the added copy so we only add each one once.
+  if (!ownerId) return voiceId;
+  const key = ownerId + "/" + voiceId;
+  if (db.voiceAdds[key]) return db.voiceAdds[key];
+  const r = await fetch(`https://api.elevenlabs.io/v1/voices/add/${encodeURIComponent(ownerId)}/${encodeURIComponent(voiceId)}`, {
+    method: "POST",
+    headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ new_name: "gener8-" + voiceId.slice(0, 8) }),
+  });
+  if (!r.ok) throw new Error("Could not add that library voice — your ElevenLabs plan may be at its voice limit.");
+  const d = await r.json();
+  const newId = d.voice_id || voiceId;
+  db.voiceAdds[key] = newId; saveDb();
+  return newId;
+}
 function pruneExpired() {
   const cutoff = Date.now() - db.settings.retentionDays * 86400000;
   let removed = 0;
@@ -205,7 +223,7 @@ function pruneExpired() {
 }
 function clientRecord(r) {
   return {
-    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
+    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, voiceName: r.voiceName || null, genMode: r.genMode, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
     count: r.count, duration: r.duration, resolution: r.resolution,
     items: r.items, inputs: r.inputs || [], upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
     slots: r.slots ? r.slots.map((s) => ({ status: s.status, error: s.error })) : undefined,
@@ -231,11 +249,30 @@ function requireEleven(res) {
 // ---- ElevenLabs voices (for the voiceover voice picker) --------------------
 app.get("/api/voices", requireAuth, async (req, res) => {
   if (!requireEleven(res)) return;
+  const q = (req.query.q || "").toString().trim();
   try {
-    const r = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
-    if (!r.ok) return res.status(502).json({ error: "Could not load voices." });
-    const d = await r.json();
-    const voices = (d.voices || []).map((v) => ({ id: v.voice_id, name: v.name })).slice(0, 80);
+    const out = [];
+    // Without a search term, also surface the user's own/account voices first.
+    if (!q) {
+      try {
+        const ar = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": ELEVEN_KEY } });
+        if (ar.ok) { const ad = await ar.json(); (ad.voices || []).forEach((v) => out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: null, desc: "In your library" })); }
+      } catch {}
+    }
+    // The ElevenLabs shared voice library (searchable, with audio previews).
+    const url = new URL("https://api.elevenlabs.io/v1/shared-voices");
+    url.searchParams.set("page_size", "30");
+    if (q) url.searchParams.set("search", q);
+    const sr = await fetch(url, { headers: { "xi-api-key": ELEVEN_KEY } });
+    if (sr.ok) {
+      const sd = await sr.json();
+      (sd.voices || []).forEach((v) => {
+        const bits = [v.gender, v.accent, v.age, v.use_case || v.descriptive].filter(Boolean);
+        out.push({ id: v.voice_id, name: v.name, preview: v.preview_url || null, ownerId: v.public_owner_id || null, desc: bits.join(" · ") });
+      });
+    }
+    const seen = new Set();
+    const voices = out.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id)).slice(0, 60);
     res.json({ voices });
   } catch (err) { res.status(500).json({ error: err?.message || "Failed to load voices." }); }
 });
@@ -245,12 +282,14 @@ app.post("/api/generate-vo", requireAuth, async (req, res) => {
   if (!requireEleven(res)) return;
   const u = req.user;
   try {
-    const { text, voiceId } = req.body || {};
+    const { text, voiceId, ownerId, voiceName } = req.body || {};
     if (!text || !text.trim()) return res.status(400).json({ error: "Some text to speak is required." });
     if (text.length > 5000) return res.status(400).json({ error: "Text is too long (max 5000 characters)." });
     const cost = db.settings.voCost;
     if (u.credits < cost) return res.status(402).json({ error: `Not enough credits — this needs ${cost}, you have ${u.credits}.` });
-    const vid = (voiceId && /^[A-Za-z0-9]+$/.test(voiceId)) ? voiceId : ELEVEN_DEFAULT_VOICE;
+    let vid = (voiceId && /^[A-Za-z0-9_-]+$/.test(voiceId)) ? voiceId : ELEVEN_DEFAULT_VOICE;
+    const owner = (ownerId && /^[A-Za-z0-9_-]+$/.test(ownerId)) ? ownerId : null;
+    try { vid = await resolveVoice(vid, owner); } catch (e) { return res.status(502).json({ error: e.message }); }
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${vid}`, {
       method: "POST",
       headers: { "xi-api-key": ELEVEN_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
@@ -260,7 +299,7 @@ app.post("/api/generate-vo", requireAuth, async (req, res) => {
     const ab = await r.arrayBuffer();
     const url = saveMedia(Buffer.from(ab), "mp3", u.id);
     charge(u, cost);
-    const rec = { id: rid(), userId: u.id, type: "audio", subtype: "vo", prompt: text, voice: vid, items: [url], inputs: [], status: "done", createdAt: Date.now() };
+    const rec = { id: rid(), userId: u.id, type: "audio", subtype: "vo", prompt: text, voice: vid, voiceName: voiceName || null, items: [url], inputs: [], status: "done", createdAt: Date.now() };
     db.feed[rec.id] = rec; saveDb();
     res.json({ record: clientRecord(rec), credits: u.credits });
   } catch (err) { console.error("generate-vo:", err); res.status(500).json({ error: err?.message || "Voice generation failed." }); }

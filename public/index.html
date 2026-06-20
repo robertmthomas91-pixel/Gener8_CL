@@ -225,7 +225,7 @@
         <div id="voWrap" style="display:none">
           <div class="lbl">Voice</div>
           <div style="position:relative">
-            <input id="voiceSearch" type="text" autocomplete="off" placeholder="Search voices…" style="padding:8px 11px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;min-width:190px" />
+            <input id="voiceSearch" type="text" autocomplete="off" placeholder="Search the voice library…" style="padding:8px 11px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;min-width:190px" />
             <div id="voiceList" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:60;min-width:230px;max-height:260px;overflow:auto;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-lg)"></div>
           </div>
         </div>
@@ -318,7 +318,7 @@
 
 <script>
 (function(){
-  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', musicLen:30000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  var state = { mode:'image', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:30000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
   var PRICING = { startCredits:20000, imageCost:2, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
@@ -457,7 +457,7 @@
     if (isVideo) renderOpts('resOpts', ['720p','1080p'], state.videoRes, function(r){ return r === '1080p' ? '1080p +' : r; }, function(v){ state.videoRes = v; renderControls(); });
     if (isVideo) [].forEach.call(document.querySelectorAll('#modelMenu .modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); var base=mk==='lite'?PRICING.videoLite:PRICING.videoFast; b.innerHTML=(mk==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')+' <span style="color:var(--text-faint);font-weight:500">'+base+' cr/clip</span>'; b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; });
     if (isMusic) renderOpts('musicOpts', [15,30,60], Math.round(state.musicLen/1000), function(d){ return d + 's'; }, function(v){ state.musicLen = v*1000; renderControls(); });
-    if (isVO){ var vsi = document.getElementById('voiceSearch'); if (vsi && document.activeElement !== vsi) vsi.value = voiceName(state.voiceId); }
+    if (isVO){ var vsi = document.getElementById('voiceSearch'); if (vsi && document.activeElement !== vsi) vsi.value = state.voiceName || voiceName(state.voiceId); }
     [].forEach.call(document.querySelectorAll('#videoModeTabs .tab'), function(x){ x.setAttribute('aria-selected', String(x.getAttribute('data-vmode') === state.videoMode)); });
     var placeholders = {
       image: 'Describe the image you want — subject, style, lighting, composition, mood, colour…',
@@ -505,7 +505,7 @@
   function showLogin(show){ document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none'; }
   function timeAgo(ts){ if(!ts) return 'just now'; var sec=Math.floor((Date.now()-ts)/1000); if(sec<60) return 'just now'; var m=Math.floor(sec/60); if(m<60) return m+' min ago'; var h=Math.floor(m/60); if(h<24) return h+'h ago'; return Math.floor(h/24)+'d ago'; }
   function recordToGen(rec){
-    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, subtype: rec.subtype || null, voice: rec.voice || null, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
+    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, subtype: rec.subtype || null, voice: rec.voice || null, voiceName: rec.voiceName || null, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
     if (rec.slots){ g.slots = rec.slots.map(function(sl,i){ return { status: sl.status, error: sl.error, url: (rec.items&&rec.items[i])||null, progress: sl.status==='done'?100:(sl.status==='error'?0:8) }; }); }
     return g;
   }
@@ -565,33 +565,39 @@
   document.getElementById('adminClose').onclick = closeAdmin;
   document.getElementById('adminModal').onclick = function(e){ if(e.target===this) closeAdmin(); };
   var VOICES = [];
-  function voiceName(id){ var v = VOICES.find(function(x){ return x.id === id; }); return v ? v.name : ''; }
-  function renderVoiceList(filter){
+  var voicePreviewAudio = null;
+  var voiceSearchTimer = null;
+  var voicesLoadedOnce = false;
+  function voiceName(id){ var v = VOICES.find(function(x){ return x.id === id; }); return v ? v.name : (state.voiceName || ''); }
+  function renderVoiceList(){
     var list = document.getElementById('voiceList'); if (!list) return;
-    var f = (filter||'').toLowerCase();
-    var matches = VOICES.filter(function(v){ return v.name.toLowerCase().indexOf(f) >= 0; }).slice(0, 60);
-    list.innerHTML = matches.length ? matches.map(function(v){
-      return '<div class="voiceOpt" data-vid="'+v.id+'" style="padding:9px 12px;cursor:pointer;font-size:13px;color:var(--text)'+(v.id===state.voiceId?';background:var(--accent-soft)':'')+'">'+escapeHtml(v.name)+'</div>';
+    list.innerHTML = VOICES.length ? VOICES.map(function(v){
+      return '<div class="voiceOpt" data-vid="'+v.id+'" data-owner="'+(v.ownerId||'')+'" data-name="'+escapeHtml(v.name)+'" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer'+(v.id===state.voiceId?';background:var(--accent-soft)':'')+'">'
+        + (v.preview ? '<button class="voicePlay" data-prev="'+escapeHtml(v.preview)+'" title="Play sample" style="flex:0 0 auto;width:26px;height:26px;border:none;border-radius:7px;background:var(--chip);color:var(--text);cursor:pointer;font-size:11px">&#9654;</button>' : '<span style="width:26px;flex:0 0 auto"></span>')
+        + '<span style="flex:1;min-width:0"><span style="font-size:13px;color:var(--text);display:block">'+escapeHtml(v.name)+'</span>'+(v.desc?'<span style="font-size:11px;color:var(--text-faint);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escapeHtml(v.desc)+'</span>':'')+'</span></div>';
     }).join('') : '<div style="padding:9px 12px;font-size:13px;color:var(--text-faint)">No voices found</div>';
     [].forEach.call(list.querySelectorAll('.voiceOpt'), function(el){
-      el.onmousedown = function(e){ e.preventDefault(); state.voiceId = el.getAttribute('data-vid'); document.getElementById('voiceSearch').value = voiceName(state.voiceId); list.style.display = 'none'; };
+      el.onmousedown = function(e){ if (e.target.closest('.voicePlay')) return; e.preventDefault(); state.voiceId = el.getAttribute('data-vid'); state.voiceOwner = el.getAttribute('data-owner') || null; state.voiceName = el.getAttribute('data-name'); document.getElementById('voiceSearch').value = state.voiceName; list.style.display = 'none'; };
+    });
+    [].forEach.call(list.querySelectorAll('.voicePlay'), function(b){
+      b.onmousedown = function(e){ e.preventDefault(); e.stopPropagation(); try { if (voicePreviewAudio) voicePreviewAudio.pause(); voicePreviewAudio = new Audio(b.getAttribute('data-prev')); voicePreviewAudio.play(); } catch(err){} };
     });
   }
-  function loadVoices(){
-    fetch('/api/voices').then(handleJson).then(function(d){
+  function loadVoices(q){
+    fetch('/api/voices' + (q ? ('?q=' + encodeURIComponent(q)) : '')).then(handleJson).then(function(d){
       VOICES = d.voices || [];
-      if (VOICES.length && !state.voiceId) state.voiceId = VOICES[0].id;
-      var si = document.getElementById('voiceSearch'); if (si && state.voiceId) si.value = voiceName(state.voiceId);
-      renderVoiceList('');
-    }).catch(function(){});
+      voicesLoadedOnce = true;
+      if (!state.voiceId && VOICES.length){ state.voiceId = VOICES[0].id; state.voiceOwner = VOICES[0].ownerId || null; state.voiceName = VOICES[0].name; var si0 = document.getElementById('voiceSearch'); if (si0 && document.activeElement !== si0) si0.value = state.voiceName; }
+      renderVoiceList();
+    }).catch(function(){ VOICES = []; renderVoiceList(); });
   }
   (function(){
     var si = document.getElementById('voiceSearch'); var list = document.getElementById('voiceList');
     if (!si) return;
-    si.addEventListener('focus', function(){ renderVoiceList(''); si.select(); list.style.display = 'block'; });
-    si.addEventListener('input', function(){ renderVoiceList(si.value); list.style.display = 'block'; });
+    si.addEventListener('focus', function(){ list.style.display = 'block'; if (!voicesLoadedOnce) loadVoices(''); else renderVoiceList(); });
+    si.addEventListener('input', function(){ list.style.display = 'block'; clearTimeout(voiceSearchTimer); var q = si.value; voiceSearchTimer = setTimeout(function(){ loadVoices(q); }, 300); });
     si.addEventListener('keydown', function(e){ if (e.key === 'Escape'){ list.style.display = 'none'; si.blur(); } });
-    document.addEventListener('click', function(e){ if (list && list.style.display !== 'none' && !e.target.closest('#voWrap')){ list.style.display = 'none'; si.value = voiceName(state.voiceId); } });
+    document.addEventListener('click', function(e){ if (list && list.style.display !== 'none' && !e.target.closest('#voWrap')){ list.style.display = 'none'; si.value = state.voiceName || ''; } });
   })();
   init();
 
@@ -685,7 +691,7 @@
 
     card.innerHTML = media + meta;
     var retry = card.querySelector('[data-retry]');
-    if (retry) retry.onclick = function(){ runGeneration({ prompt: gen.prompt, type: (gen.type==='audio'?gen.subtype:gen.type), genMode: gen.genMode, model: gen.model, count: gen.count, aspect: gen.aspect, resolution: gen.resolution, duration: gen.duration, neg: gen.neg, imageRefs: gen.imageRefs, frames: gen.frames, references: gen.references, voiceId: gen.voice, lengthMs: (gen.duration?gen.duration*1000:30000) }); };
+    if (retry) retry.onclick = function(){ runGeneration({ prompt: gen.prompt, type: (gen.type==='audio'?gen.subtype:gen.type), genMode: gen.genMode, model: gen.model, count: gen.count, aspect: gen.aspect, resolution: gen.resolution, duration: gen.duration, neg: gen.neg, imageRefs: gen.imageRefs, frames: gen.frames, references: gen.references, voiceId: gen.voice, voiceOwner: null, voiceName: gen.voiceName, lengthMs: (gen.duration?gen.duration*1000:30000) }); };
     var del = card.querySelector('[data-del]'); if (del) del.onclick = function(){ deleteCard(gen); };
     var ru = card.querySelector('[data-reuse]'); if (ru) ru.onclick = function(){ reuseGeneration(gen); };
     wireItemTools(card, gen);
@@ -790,7 +796,7 @@
   }
   function reuseGeneration(gen){
     document.getElementById('prompt').value = gen.prompt || '';
-    if (gen.type === 'image'){ state.mode = 'image'; } else if (gen.type === 'audio'){ state.mode = gen.subtype === 'music' ? 'music' : 'vo'; if (gen.subtype === 'vo' && gen.voice) state.voiceId = gen.voice; if (gen.subtype === 'music' && gen.duration) state.musicLen = gen.duration * 1000; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; state.videoRes = gen.resolution || '720p'; }
+    if (gen.type === 'image'){ state.mode = 'image'; } else if (gen.type === 'audio'){ state.mode = gen.subtype === 'music' ? 'music' : 'vo'; if (gen.subtype === 'vo'){ state.voiceId = gen.voice || ''; state.voiceOwner = null; state.voiceName = gen.voiceName || ''; } if (gen.subtype === 'music' && gen.duration) state.musicLen = gen.duration * 1000; } else { state.mode = 'video'; state.videoMode = gen.genMode || 'video'; state.videoModel = gen.model || 'fast'; state.videoRes = gen.resolution || '720p'; }
     var np = document.getElementById('negPrompt'); if (np) np.value = gen.neg || '';
     if (gen.neg){ state.advanced = true; var adv = document.getElementById('advanced'); if (adv) adv.style.display = ''; }
     state.imageRefs = []; state.frameImages = []; state.refImages = [];
@@ -822,7 +828,7 @@
       .catch(function(err){ tcard.remove(); restoreInputs(snap); showBanner(err.message); });
     } else if (cfg.type === 'vo' || cfg.type === 'music'){
       var endpoint = cfg.type === 'vo' ? '/api/generate-vo' : '/api/generate-music';
-      var abody = cfg.type === 'vo' ? { text: cfg.prompt, voiceId: cfg.voiceId } : { prompt: cfg.prompt, lengthMs: cfg.lengthMs };
+      var abody = cfg.type === 'vo' ? { text: cfg.prompt, voiceId: cfg.voiceId, ownerId: cfg.voiceOwner, voiceName: cfg.voiceName } : { prompt: cfg.prompt, lengthMs: cfg.lengthMs };
       var tmpA = { id:'tmp-'+(++genCounter), type:'audio', subtype:cfg.type, prompt:cfg.prompt, items:[], status:'generating', when:'just now' };
       var acard = makeCard(tmpA); feedEl.insertBefore(acard, feedEl.firstChild);
       fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(abody) })
@@ -873,6 +879,8 @@
       frames: m === 'frames' ? [state.frameImages[0], state.frameImages[1]].filter(Boolean) : [],
       references: m === 'ingredients' ? refs : [],
       voiceId: state.voiceId,
+      voiceOwner: state.voiceOwner,
+      voiceName: state.voiceName,
       lengthMs: state.musicLen
     }, snap);
     clearInputs();
