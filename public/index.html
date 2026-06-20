@@ -18,7 +18,7 @@
     --surface:rgba(255,255,255,0.055); --surface-2:rgba(255,255,255,0.08); --surface-hover:rgba(255,255,255,0.12);
     --border:rgba(255,255,255,0.08); --border-strong:rgba(255,255,255,0.16);
     --text:#f1f2f5; --text-dim:#9aa1ad; --text-faint:#646b78;
-    --accent:#ff7a2e; --accent-2:#ffa255; --accent-soft:rgba(255,122,46,0.16); --accent-border:rgba(255,122,46,0.45);
+    --accent:#ff1f5e; --accent-2:#ff5b86; --accent-soft:rgba(255,31,94,0.16); --accent-border:rgba(255,31,94,0.45);
     --shadow:0 6px 24px rgba(0,0,0,0.38); --shadow-lg:0 20px 60px rgba(0,0,0,0.5);
     --glow-a:rgba(255,96,38,0.34); --glow-b:rgba(126,92,255,0.26); --glow-c:rgba(255,58,96,0.24); --glow-d:rgba(54,156,224,0.22);
     --chip:rgba(255,255,255,0.05); --scrim:rgba(8,9,12,0.55); --danger:#ff5b5b;
@@ -29,7 +29,7 @@
     --surface:rgba(255,255,255,0.60); --surface-2:rgba(255,255,255,0.85); --surface-hover:rgba(255,255,255,0.96);
     --border:rgba(30,28,24,0.10); --border-strong:rgba(30,28,24,0.2);
     --text:#1a1b1e; --text-dim:#5d6068; --text-faint:#9094a0;
-    --accent:#e8650f; --accent-2:#ff8a3d; --accent-soft:rgba(232,101,15,0.12); --accent-border:rgba(232,101,15,0.4);
+    --accent:#e00b4a; --accent-2:#ff4d7d; --accent-soft:rgba(224,11,74,0.12); --accent-border:rgba(224,11,74,0.4);
     --shadow:0 6px 24px rgba(120,90,60,0.12); --shadow-lg:0 24px 60px rgba(120,90,60,0.18);
     --glow-a:rgba(255,122,40,0.62); --glow-b:rgba(140,96,255,0.58); --glow-c:rgba(255,70,128,0.52); --glow-d:rgba(58,150,236,0.52);
     --chip:rgba(30,28,24,0.04); --scrim:rgba(255,255,255,0.55);
@@ -53,9 +53,15 @@
   @keyframes drift2 { 0%,100%{transform:translate(0,0) scale(1.08);} 50%{transform:translate(-8%,-4%) scale(0.92);} }
   @keyframes drift3 { 0%,100%{transform:translate(0,0) scale(1);} 50%{transform:translate(6%,-7%) scale(1.12);} }
 
-  .liquid { position:fixed; inset:0; pointer-events:none; z-index:0; overflow:hidden; background:var(--bg); }
-  .liquid .blobs { position:absolute; inset:-28%; filter:blur(72px) saturate(1.5); }
-  .blob { position:absolute; border-radius:50%; }
+  .liquid { position:fixed; inset:0; pointer-events:none; z-index:0; overflow:hidden; background:radial-gradient(135% 105% at 50% -12%, #181b20 0%, #0d0f13 50%, #08090c 100%); }
+  .wlayer { position:absolute; inset:0; }
+  @keyframes wxF { from { background-position-x:0; } to { background-position-x:-1440px; } }
+  @keyframes wxR { from { background-position-x:0; } to { background-position-x:1440px; } }
+  @keyframes bobA { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-2.2%); } }
+  @keyframes bobB { 0%,100% { transform:translateY(0); } 50% { transform:translateY(2.0%); } }
+  html[data-theme="light"] .liquid { background:var(--bg); }
+  html[data-theme="light"] .wlayer { opacity:0.10; }
+  @media (prefers-reduced-motion: reduce) { .wlayer { animation:none !important; } }
 
   header.bar {
     position:sticky; top:0; z-index:40; background:var(--glass);
@@ -119,12 +125,10 @@
 </head>
 <body>
   <div class="liquid" aria-hidden="true">
-    <div class="blobs">
-      <div class="blob" style="width:62vw;height:62vw;left:-12%;top:-16%;background:radial-gradient(circle at 50% 50%,var(--glow-a),transparent 62%);animation:drift1 19s ease-in-out infinite"></div>
-      <div class="blob" style="width:56vw;height:56vw;right:-10%;top:6%;background:radial-gradient(circle at 50% 50%,var(--glow-c),transparent 62%);animation:drift2 23s ease-in-out infinite"></div>
-      <div class="blob" style="width:60vw;height:60vw;left:-6%;bottom:-22%;background:radial-gradient(circle at 50% 50%,var(--glow-b),transparent 62%);animation:drift3 21s ease-in-out infinite"></div>
-      <div class="blob" style="width:46vw;height:46vw;right:4%;bottom:-12%;background:radial-gradient(circle at 50% 50%,var(--glow-d),transparent 62%);animation:drift1 27s ease-in-out infinite reverse"></div>
-    </div>
+      <div class="wlayer" style="position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201440%201080%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M0%2C300%20Q360%2C170%20720%2C300%20Q1080%2C430%201440%2C300%20L1440%2C1080%20L0%2C1080%20Z%27%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.03%27%2F%3E%3C%2Fsvg%3E");background-repeat:repeat-x;background-size:1440px 100%;background-position:0 center;filter:blur(28px);will-change:background-position,transform;animation:wxF 130s linear infinite,bobA 19s ease-in-out infinite;"></div>
+      <div class="wlayer" style="position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201440%201080%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M0%2C500%20Q180%2C405%20360%2C500%20Q540%2C595%20720%2C500%20Q900%2C405%201080%2C500%20Q1260%2C595%201440%2C500%20L1440%2C1080%20L0%2C1080%20Z%27%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.04%27%2F%3E%3C%2Fsvg%3E");background-repeat:repeat-x;background-size:1440px 100%;background-position:0 center;filter:blur(18px);will-change:background-position,transform;animation:wxR 95s linear infinite,bobB 16s ease-in-out infinite;"></div>
+      <div class="wlayer" style="position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201440%201080%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M0%2C690%20Q120%2C620%20240%2C690%20Q360%2C760%20480%2C690%20Q600%2C620%20720%2C690%20Q840%2C760%20960%2C690%20Q1080%2C620%201200%2C690%20Q1320%2C760%201440%2C690%20L1440%2C1080%20L0%2C1080%20Z%27%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.035%27%2F%3E%3C%2Fsvg%3E");background-repeat:repeat-x;background-size:1440px 100%;background-position:0 center;filter:blur(11px);will-change:background-position,transform;animation:wxF 74s linear infinite,bobA 13s ease-in-out infinite;"></div>
+      <div class="wlayer" style="position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201440%201080%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M0%2C860%20Q180%2C740%20360%2C860%20Q540%2C980%20720%2C860%20Q900%2C740%201080%2C860%20Q1260%2C980%201440%2C860%20L1440%2C1080%20L0%2C1080%20Z%27%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.052%27%2F%3E%3C%2Fsvg%3E");background-repeat:repeat-x;background-size:1440px 100%;background-position:0 center;filter:blur(6px);will-change:background-position,transform;animation:wxR 108s linear infinite,bobB 22s ease-in-out infinite;"></div>
   </div>
 
   <header class="bar">

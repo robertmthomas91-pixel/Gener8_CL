@@ -1,6 +1,6 @@
 {
   "name": "gener8",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "private": true,
   "type": "module",
   "description": "GENER8 \u2014 AI image & video generation (Nano Banana Pro + Veo 3.1 Fast)",
