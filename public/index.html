@@ -445,7 +445,7 @@
     var isMusic = state.mode === 'music';
     state.duration = 8;
     document.getElementById('durationWrap').style.display = 'none';
-    document.getElementById('countWrap').style.display = isImage ? '' : 'none';
+    document.getElementById('countWrap').style.display = (isImage || isVideo) ? '' : 'none';
     document.getElementById('aspectWrap').style.display = (isImage || isVideo) ? '' : 'none';
     document.getElementById('videoModes').style.display = isVideo ? '' : 'none';
     document.getElementById('resWrap').style.display = isVideo ? '' : 'none';
@@ -701,7 +701,7 @@
       meta += '<button class="btn-ghost" style="justify-content:center" data-retry="'+gen.id+'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/></svg> Regenerate</button>';
       meta += '</div>';
     } else {
-      meta += '<div style="font-size:12px;color:var(--text-faint)">'+(gen.type==='video'?'Hover to expand or download.':'Click an image to enlarge · hover for download / 4K / → video / + ingredient.')+'</div>';
+      meta += '<div style="font-size:12px;color:var(--text-faint)">'+(gen.type==='video'?'Hover to expand or download.':'Click an image to enlarge · hover for download / 4K / add to video.')+'</div>';
       meta += '<button class="btn-ghost" style="justify-content:center" data-retry="'+gen.id+'"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6"/><path d="M20 5v6h-6"/></svg> Regenerate</button>';
     }
     meta += '</aside>';
@@ -732,8 +732,7 @@
     t += '<button class="tbtn" data-dl="'+idx+'" title="Download this '+(gen.type==='video'?'video':'image')+'">'+SVG_DL+'</button>';
     if (gen.type === 'image'){
       t += '<button class="tbtn" data-up="'+idx+'" title="Upscale to 4K"'+(done?' disabled':'')+'>'+SVG_UP+'</button>';
-      t += '<button class="tbtn" data-animate="'+idx+'" title="Use as Image → Video input">'+SVG_VID+'</button>';
-      t += '<button class="tbtn" data-ingredient="'+idx+'" title="Add as Ingredient (for video)">'+SVG_ING+'</button>';
+      t += '<button class="tbtn" data-tovideo="'+idx+'" title="Add to video (uses the video type you have open)">'+SVG_VID+'</button>';
     }
     return t + '</div>';
   }
@@ -743,8 +742,7 @@
     [].forEach.call(card.querySelectorAll('[data-open]'), function(el){ el.onclick = function(){ openLightbox(gen, +el.getAttribute('data-open')); }; });
     [].forEach.call(card.querySelectorAll('[data-dl]'), function(b){ b.onclick = function(){ downloadItem(gen, +b.getAttribute('data-dl')); }; });
     [].forEach.call(card.querySelectorAll('[data-up]'), function(b){ b.onclick = function(){ upscaleItem(gen, +b.getAttribute('data-up'), b); }; });
-    [].forEach.call(card.querySelectorAll('[data-animate]'), function(b){ b.onclick = function(){ useForVideo(gen.items[+b.getAttribute('data-animate')]); }; });
-    [].forEach.call(card.querySelectorAll('[data-ingredient]'), function(b){ b.onclick = function(){ useAsIngredient(gen.items[+b.getAttribute('data-ingredient')]); }; });
+    [].forEach.call(card.querySelectorAll('[data-tovideo]'), function(b){ b.onclick = function(){ addToVideo(gen.items[+b.getAttribute('data-tovideo')]); }; });
   }
   function promptSlug(p){
     var w = (p||'').toLowerCase().replace(/[^a-z0-9\s-]/g,'').split(/\s+/).filter(Boolean).slice(0,4);
@@ -775,11 +773,18 @@
     if (url.indexOf('data:') === 0) return Promise.resolve(url);
     return fetch(url).then(function(r){ return r.blob(); }).then(function(b){ return new Promise(function(res){ var fr=new FileReader(); fr.onload=function(){ res(fr.result); }; fr.readAsDataURL(b); }); });
   }
-  function useForVideo(src){
-    toDataURL(src).then(function(d){ if(!d) return; state.mode='video'; state.videoMode='frames'; state.frameImages[0]=d; selectVideoTab(); renderControls(); showBanner('Loaded into Image → Video. Add a motion prompt and hit Generate.'); });
-  }
-  function useAsIngredient(src){
-    toDataURL(src).then(function(d){ if(!d) return; state.mode='video'; state.videoMode='ingredients'; if(state.refImages.filter(Boolean).length>=3){ selectVideoTab(); renderControls(); showBanner('Ingredients already has 3 images — remove one to add this.'); return; } state.refImages.push(d); selectVideoTab(); renderControls(); showBanner('Added to Ingredients ('+state.refImages.filter(Boolean).length+'/3). Write a prompt and hit Generate.'); });
+  function addToVideo(src){
+    toDataURL(src).then(function(d){ if(!d) return;
+      var sub = (state.mode === 'video') ? state.videoMode : 'frames';
+      if (sub !== 'frames' && sub !== 'ingredients') sub = 'frames'; // Text→Video has no image input
+      state.mode = 'video'; state.videoMode = sub;
+      if (sub === 'ingredients'){
+        if (state.refImages.filter(Boolean).length >= 3){ selectVideoTab(); renderControls(); showBanner('Ingredients already has 3 images — remove one to add this.'); return; }
+        state.refImages.push(d); selectVideoTab(); renderControls(); showBanner('Added to Ingredients ('+state.refImages.filter(Boolean).length+'/3). Write a prompt and hit Generate.');
+      } else {
+        state.frameImages[0] = d; selectVideoTab(); renderControls(); showBanner('Loaded into Image → Video. Add a motion prompt and hit Generate.');
+      }
+    });
   }
   // ---- lightbox ----
   function openLightbox(gen, idx){
