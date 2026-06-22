@@ -1,3 +1,31 @@
+# GENER8 v3 — multi-tenant, Postgres-backed
+
+GENER8 now hosts multiple **workspaces** (businesses) from one deployment, each fully isolated with its own users, credits, feed, settings and **API keys**. All data lives in **Postgres**; per-tenant API keys are encrypted at rest.
+
+## What you must set up on Railway (v3)
+
+1. **Add a Postgres database**: Railway → your project → **New → Database → Postgres**. Then in the app service **Variables**, add `DATABASE_URL` referencing the Postgres connection string (Railway can inject it with a variable reference). The app creates its tables automatically on boot.
+2. **Set `APP_SECRET`** to a long random string — this encrypts each workspace's API keys in the database.
+3. **Set `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD`** — this is the account that manages all workspaces (the **Workspaces** button in the app). If you omit the password, one is printed in the deploy logs on first boot.
+4. Keep the **Volume** mounted at `/data` (for media files + local DB snapshots) and `DATA_DIR=/data`.
+
+### Migrating your existing (v2) data
+On first boot, if an old `data/db.json` is present on the volume, it is imported once into a **Default** workspace, using your existing `GEMINI_API_KEY` / `ELEVENLABS_API_KEY` env vars as that workspace's keys. Your existing users, credits and feed carry over.
+
+### Roles
+- **Superadmin** (you): creates workspaces, sets each one's API keys and starting credits, suspends/reactivates them, and sees per-workspace monthly usage + estimated $ spend for invoicing. Uses the **Workspaces** console.
+- **Workspace admin** (your client): manages their own users, credits and pricing via the **Admin** panel — scoped to their workspace only.
+- **User**: generates content within their workspace's credit allowance.
+
+### Per-tenant API keys
+Each workspace uses **its own** Gemini and ElevenLabs keys (set in the Workspaces console), so each business's API spend is billed to its own key. Keys are stored encrypted (`APP_SECRET`) and never sent to browsers.
+
+### Observability
+- `GET /api/health` reports DB connectivity.
+- Logs are structured JSON. Set `SENTRY_DSN` to capture errors in Sentry.
+
+---
+
 # GENER8
 
 A multi-user web app for generating **images, video, voiceover, and music**:

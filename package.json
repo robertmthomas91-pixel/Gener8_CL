@@ -1,9 +1,9 @@
 {
   "name": "gener8",
-  "version": "2.13.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "GENER8 \u2014 AI image & video generation (Nano Banana Pro + Veo 3.1 Fast)",
+  "description": "GENER8 \u2014 multi-tenant AI generation studio (Postgres)",
   "scripts": {
     "start": "node server.js"
   },
@@ -12,6 +12,11 @@
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
-    "express": "^4.21.2"
+    "@sentry/node": "^10.59.0",
+    "express": "^4.21.2",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.14"
   }
 }
