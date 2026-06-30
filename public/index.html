@@ -949,7 +949,7 @@
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); acard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
       .catch(function(err){ acard.remove(); restoreInputs(snap); showBanner(err.message); });
     } else if (cfg.model === 'omni'){
-      var tmpO = { id:'tmp-'+(++genCounter), type:'video', omni:true, genMode:cfg.genMode, prompt:cfg.prompt, aspect:cfg.aspect, count:cfg.count, model:'omni', items:[], slots:[{status:'generating',progress:8}], status:'generating', when:'just now' };
+      var tmpO = { id:'tmp-'+(++genCounter), type:'video', omni:true, genMode:cfg.genMode, prompt:cfg.prompt, aspect:cfg.aspect, count:cfg.count, model:'omni', items:[], slots:Array.from({length:Math.max(1,cfg.count||1)},function(){return {status:'generating',progress:8};}), status:'generating', when:'just now' };
       var ocard = makeCard(tmpO); feedEl.insertBefore(ocard, feedEl.firstChild);
       fetch('/api/generate-omni', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })

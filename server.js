@@ -476,10 +476,15 @@ function omniVideoOut(resp) {
   return { uri: null, data: null };
 }
 function omniFileId(uri) { const m = (uri || "").match(/files\/([^:?/]+)/); return m ? m[1] : null; }
-async function omniCreate(key, body) {
-  const r = await fetch(`${OMNI_BASE}/interactions`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`Omni ${r.status}: ${(await r.text()).slice(0, 180)}`);
-  return r.json();
+async function omniCreate(key, body, timeoutMs = 100000) {
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${OMNI_BASE}/interactions`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
+    if (!r.ok) throw new Error(`Omni ${r.status}: ${(await r.text()).slice(0, 180)}`);
+    return r.json();
+  } catch (e) { if (e && e.name === "AbortError") throw new Error("Omni request timed out starting the job."); throw e; }
+  finally { clearTimeout(to); }
 }
 async function omniFileState(key, id) { try { const r = await fetch(`${OMNI_BASE}/files/${id}`, { headers: { "x-goog-api-key": key } }); if (!r.ok) return null; const d = await r.json(); return (typeof d.state === "string" ? d.state : (d.state && d.state.name)) || null; } catch { return null; } }
 async function omniDownload(key, id) { const r = await fetch(`${OMNI_BASE}/files/${id}:download?alt=media`, { headers: { "x-goog-api-key": key }, redirect: "follow" }); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
@@ -506,16 +511,16 @@ app.post("/api/generate-omni", genLimit, requireAuth, asyncMw(async (req, res) =
     const per = s.omniCost;
     if ((await store.reserve(u.id, per * n)) === null) return res.status(402).json({ error: `Not enough credits — this needs ${per * n}.` });
     reserved = per * n;
-    const slots = [];
-    for (let k = 0; k < n; k++) {
+    const startOne = async () => {
       try {
         const resp = await omniCreate(t.geminiKey, { model: OMNI_MODEL, input, response_format: { type: "video", aspect_ratio: aspect, delivery: "uri" }, generation_config: { video_config: { task } } });
         const v = omniVideoOut(resp); const fid = omniFileId(v.uri);
-        if (v.data && !fid) { const url = await saveMedia(Buffer.from(v.data, "base64"), "mp4", t.id, u.id); slots.push({ status: "done", url, interactionId: resp.id || null, error: null }); }
-        else if (fid) slots.push({ status: "generating", fileId: fid, interactionId: resp.id || null, error: null });
-        else { slots.push({ status: "error", error: "Omni returned no video." }); await store.refund(u.id, per); }
-      } catch (e) { captureError(e, { route: "generate-omni", model: OMNI_MODEL }); slots.push({ status: "error", error: e?.message || "Failed to start." }); await store.refund(u.id, per); }
-    }
+        if (v.data && !fid) { const url = await saveMedia(Buffer.from(v.data, "base64"), "mp4", t.id, u.id); return { status: "done", url, interactionId: resp.id || null, error: null }; }
+        if (fid) return { status: "generating", fileId: fid, interactionId: resp.id || null, error: null };
+        await store.refund(u.id, per); return { status: "error", error: "Omni returned no video." };
+      } catch (e) { captureError(e, { route: "generate-omni", model: OMNI_MODEL }); await store.refund(u.id, per); return { status: "error", error: e?.message || "Failed to start." }; }
+    };
+    const slots = await Promise.all(Array.from({ length: n }, startOne));
     const items = slots.map((sl) => sl.url || null);
     const allErr = slots.every((sl) => sl.status === "error");
     const anyGen = slots.some((sl) => sl.status === "generating");
