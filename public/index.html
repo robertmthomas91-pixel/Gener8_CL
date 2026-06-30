@@ -352,7 +352,7 @@
 
 <script>
 (function(){
-  var state = { mode:'image', imageModel:'std', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
+  var state = { mode:'image', imageModel:'std', videoMode:'video', videoModel:'lite', videoRes:'1080p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
   var PRICING = { startCredits:20000, imageCost:2, imageProCost:4, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, omniCost:25, retentionDays:30 };
   var creditWarned = false;
