@@ -756,8 +756,8 @@
       meta += '<span class="tag">'+(gen.subtype==='music' ? ('Music · ElevenLabs'+(gen.duration?' · '+gen.duration+'s':'')) : 'Voiceover · ElevenLabs')+'</span>';
     } else {
       meta += '<span class="tag">'+gen.aspect+'</span>';
-      meta += '<span class="tag">'+(gen.type==='video' ? ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · '+(gen.model==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast')) : (gen.count+' image'+(gen.count>1?'s':'')+' · '+(gen.imodel==='pro'?'Nano Banana Pro':'Nano Banana 2')))+'</span>';
-      if (gen.type==='video'){ meta += '<span class="tag">'+({video:'Text→Video',frames:'Frames→Video',ingredients:'Ingredients→Video'}[gen.genMode||'video'])+'</span>'; }
+      meta += '<span class="tag">'+(gen.type==='video' ? (gen.model==='omni' ? ((gen.count>1?gen.count+' clips · ':'')+'Gemini Omni') : ((gen.count>1?gen.count+' clips · ':'')+gen.duration+'s · '+(gen.resolution||'1080p')+' · '+(gen.model==='lite'?'Veo 3.1 Lite':'Veo 3.1 Fast'))) : (gen.count+' image'+(gen.count>1?'s':'')+' · '+(gen.imodel==='pro'?'Nano Banana Pro':'Nano Banana 2')))+'</span>';
+      if (gen.type==='video'){ meta += '<span class="tag">'+(({video:'Text→Video',frames:'Frames→Video',ingredients:'Ingredients→Video',edit:'Omni Edit'}[gen.genMode||'video'])||'Video')+'</span>'; }
     }
     meta += '</div>';
 
@@ -949,11 +949,13 @@
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); acard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
       .catch(function(err){ acard.remove(); restoreInputs(snap); showBanner(err.message); });
     } else if (cfg.model === 'omni'){
+      var tmpO = { id:'tmp-'+(++genCounter), type:'video', omni:true, genMode:cfg.genMode, prompt:cfg.prompt, aspect:cfg.aspect, count:cfg.count, model:'omni', items:[], slots:[{status:'generating',progress:8}], status:'generating', when:'just now' };
+      var ocard = makeCard(tmpO); feedEl.insertBefore(ocard, feedEl.firstChild);
       fetch('/api/generate-omni', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
       .then(handleJson)
-      .then(function(d){ if(d.credits!=null) setCredits(d.credits); var g = recordToGen(d.record); feedEl.insertBefore(makeCard(g), feedEl.firstChild); if(g.status==='generating') pollRecord(g); })
-      .catch(function(err){ restoreInputs(snap); showBanner(err.message); });
+      .then(function(d){ if(d.credits!=null) setCredits(d.credits); ocard.remove(); var g = recordToGen(d.record); feedEl.insertBefore(makeCard(g), feedEl.firstChild); if(g.status==='generating') pollRecord(g); else if(g.status==='error'){ var se=(d.record.slots||[]).map(function(s){return s.error;}).filter(Boolean)[0]; showBanner('Omni: '+(se||'generation failed')); } })
+      .catch(function(err){ ocard.remove(); restoreInputs(snap); showBanner('Omni: '+err.message); });
     } else {
       fetch('/api/generate-video', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, duration: cfg.duration, negativePrompt: cfg.neg, resolution: cfg.resolution || '1080p', model: cfg.model || 'fast', frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })

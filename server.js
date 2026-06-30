@@ -514,7 +514,7 @@ app.post("/api/generate-omni", genLimit, requireAuth, asyncMw(async (req, res) =
         if (v.data && !fid) { const url = await saveMedia(Buffer.from(v.data, "base64"), "mp4", t.id, u.id); slots.push({ status: "done", url, interactionId: resp.id || null, error: null }); }
         else if (fid) slots.push({ status: "generating", fileId: fid, interactionId: resp.id || null, error: null });
         else { slots.push({ status: "error", error: "Omni returned no video." }); await store.refund(u.id, per); }
-      } catch (e) { slots.push({ status: "error", error: e?.message || "Failed to start." }); await store.refund(u.id, per); }
+      } catch (e) { captureError(e, { route: "generate-omni", model: OMNI_MODEL }); slots.push({ status: "error", error: e?.message || "Failed to start." }); await store.refund(u.id, per); }
     }
     const items = slots.map((sl) => sl.url || null);
     const allErr = slots.every((sl) => sl.status === "error");
