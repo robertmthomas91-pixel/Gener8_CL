@@ -166,3 +166,14 @@ Video defaults to **Veo 3.1 Lite at 720p** (the cheapest combination); switch th
 - **Usage & cost.** Admin → User management shows each user's monthly usage and an estimated $ spend; users see a low-credit warning.
 - **Voice slots.** Added ElevenLabs library voices are capped (LRU) and old ones auto-deleted so the account voice limit isn't exhausted.
 - **Legal templates.** `/terms.html`, `/privacy.html`, `/data-handling.html` are starter templates linked from the sign-in screen — have a lawyer review them before relying on them.
+
+
+## Gemini Omni (video generation + conversational editing)
+
+GENER8 includes **Gemini Omni** (`gemini-omni-flash-preview`) as a third video model alongside Veo Fast/Lite. Pick **Gemini Omni** from the video model pill.
+
+- **Generation:** text→video, image→video (Frames), and reference→video (Ingredients), with native audio. Aspect 16:9 / 9:16 (Omni controls duration/shots via the prompt, so the resolution picker is hidden for it).
+- **Conversational editing:** finished Omni clips get an **Edit** button — describe a change ("make it night-time, keep everything else the same") and Omni edits that clip via the Interactions API (`previous_interaction_id`), producing a new clip while preserving the rest.
+- **Cost:** an admin-editable `omniCost` (default 25 credits/clip).
+- Uses the workspace's own Gemini key (same key as Veo/Nano Banana). Preview model; SynthID-watermarked.
+- **UK/EEA note:** editing your *own uploaded* videos and media with minors/recognizable people is restricted by Google in the UK/EEA/Switzerland; text→video and editing Omni-generated clips work.

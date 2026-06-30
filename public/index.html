@@ -354,7 +354,7 @@
 (function(){
   var state = { mode:'image', imageModel:'std', videoMode:'video', videoModel:'lite', videoRes:'720p', voiceId:'', voiceOwner:null, voiceName:'', musicLen:60000, count:4, aspect:'16:9', duration:8, advanced:false, imageRefs:[], frameImages:[], refImages:[] };
   function effMode(){ return state.mode === 'video' ? state.videoMode : state.mode; }
-  var PRICING = { startCredits:20000, imageCost:2, imageProCost:4, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, retentionDays:30 };
+  var PRICING = { startCredits:20000, imageCost:2, imageProCost:4, upscaleCost:4, videoLite:10, videoFast:20, hdMultiplier:1.5, voCost:2, musicCost:10, omniCost:25, retentionDays:30 };
   var creditWarned = false;
   function modelOptHtml(attr, key, label, costLabel, top, disabled){ return '<button type="button" class="modelOpt"'+(disabled?' data-disabled="1"':'')+' data-'+attr+'="'+key+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:none;background:transparent;color:var(--text);font-size:13px;font-weight:600;cursor:'+(disabled?'not-allowed':'pointer')+(disabled?';opacity:0.45':'')+(top?';border-top:1px solid var(--border)':'')+'">'+label+' <span style="color:var(--text-faint);font-weight:500">'+costLabel+'</span></button>'; }
   var IMG_ASPECTS = ['1:1','16:9','9:16','4:3','3:4'];
@@ -484,12 +484,12 @@
     document.getElementById('countWrap').style.display = (isImage || isVideo) ? '' : 'none';
     document.getElementById('aspectWrap').style.display = (isImage || isVideo) ? '' : 'none';
     document.getElementById('videoModes').style.display = isVideo ? '' : 'none';
-    document.getElementById('resWrap').style.display = isVideo ? '' : 'none';
+    document.getElementById('resWrap').style.display = (isVideo && state.videoModel !== 'omni') ? '' : 'none';
     document.getElementById('voWrap').style.display = isVO ? '' : 'none';
     document.getElementById('musicWrap').style.display = isMusic ? '' : 'none';
     var pillText, pillClickable = false;
     if (isImage){ var icost = state.imageModel==='pro'?PRICING.imageProCost:PRICING.imageCost; pillText = (state.imageModel==='pro'?'Nano Banana Pro':'Nano Banana 2') + ' · ' + icost + ' cr'; pillClickable = true; }
-    else if (isVideo){ var vcost = Math.round((state.videoModel === 'lite' ? PRICING.videoLite : PRICING.videoFast) * (state.videoRes === '1080p' ? PRICING.hdMultiplier : 1)); pillText = (state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · ' + state.videoRes + ' · ' + vcost + ' cr/clip'; pillClickable = true; }
+    else if (isVideo){ if (state.videoModel === 'omni'){ pillText = 'Gemini Omni · ' + PRICING.omniCost + ' cr/clip'; } else { var vcost = Math.round((state.videoModel === 'lite' ? PRICING.videoLite : PRICING.videoFast) * (state.videoRes === '1080p' ? PRICING.hdMultiplier : 1)); pillText = (state.videoModel === 'lite' ? 'Veo 3.1 Lite' : 'Veo 3.1 Fast') + ' · ' + state.videoRes + ' · ' + vcost + ' cr/clip'; } pillClickable = true; }
     else if (isVO) pillText = 'ElevenLabs Voice · ' + PRICING.voCost + ' cr';
     else pillText = 'ElevenLabs Music · ' + PRICING.musicCost + ' cr';
     document.getElementById('modelName').textContent = pillText;
@@ -502,7 +502,7 @@
       mmEl.innerHTML = modelOptHtml('imodel','std','Nano Banana 2', PRICING.imageCost+' cr', false) + modelOptHtml('imodel','pro','Nano Banana Pro', PRICING.imageProCost+' cr', true);
       [].forEach.call(mmEl.querySelectorAll('.modelOpt'), function(b){ var mk=b.getAttribute('data-imodel'); b.style.background=(mk===state.imageModel)?'var(--accent-soft)':'transparent'; b.onclick=function(e){ e.stopPropagation(); state.imageModel=mk; mmEl.style.display='none'; renderControls(); }; });
     } else if (isVideo){
-      mmEl.innerHTML = modelOptHtml('vmodel','fast','Veo 3.1 Fast', PRICING.videoFast+' cr/clip', false) + modelOptHtml('vmodel','lite','Veo 3.1 Lite', PRICING.videoLite+' cr/clip', true);
+      mmEl.innerHTML = modelOptHtml('vmodel','fast','Veo 3.1 Fast', PRICING.videoFast+' cr/clip', false) + modelOptHtml('vmodel','lite','Veo 3.1 Lite', PRICING.videoLite+' cr/clip', true) + modelOptHtml('vmodel','omni','Gemini Omni', PRICING.omniCost+' cr/clip', true);
       [].forEach.call(mmEl.querySelectorAll('.modelOpt'), function(b){ var mk=b.getAttribute('data-vmodel'); b.style.background=(mk===state.videoModel)?'var(--accent-soft)':'transparent'; b.onclick=function(e){ e.stopPropagation(); state.videoModel=mk; mmEl.style.display='none'; renderControls(); }; });
     }
     if (isMusic) renderOpts('musicOpts', [60,90,120], Math.round(state.musicLen/1000), function(d){ return d + 's'; }, function(v){ state.musicLen = v*1000; renderControls(); });
@@ -563,7 +563,7 @@
   function showLogin(show){ document.getElementById('loginOverlay').style.display = show ? 'flex' : 'none'; }
   function timeAgo(ts){ if(!ts) return 'just now'; var sec=Math.floor((Date.now()-ts)/1000); if(sec<60) return 'just now'; var m=Math.floor(sec/60); if(m<60) return m+' min ago'; var h=Math.floor(m/60); if(h<24) return h+'h ago'; return Math.floor(h/24)+'d ago'; }
   function recordToGen(rec){
-    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, imodel: rec.imodel || 'std', prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, subtype: rec.subtype || null, voice: rec.voice || null, voiceName: rec.voiceName || null, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
+    var g = { id: rec.id, type: rec.type, genMode: rec.genMode, omni: rec.omni || false, imodel: rec.imodel || 'std', prompt: rec.prompt, neg: rec.neg || '', model: rec.model || 'fast', aspect: rec.aspect, count: rec.count, duration: rec.duration, resolution: rec.resolution, subtype: rec.subtype || null, voice: rec.voice || null, voiceName: rec.voiceName || null, items: (rec.items||[]).slice(), inputs: (rec.inputs||[]).slice(), upscaled: (rec.upscaled||[]).slice(), status: rec.status, createdAt: rec.createdAt, when: timeAgo(rec.createdAt) };
     if (rec.slots){ g.slots = rec.slots.map(function(sl,i){ return { status: sl.status, error: sl.error, url: (rec.items&&rec.items[i])||null, progress: sl.status==='done'?100:(sl.status==='error'?0:8) }; }); }
     return g;
   }
@@ -815,6 +815,7 @@
       t += '<button class="tbtn" data-up="'+idx+'" title="Upscale to 4K"'+(done?' disabled':'')+'>'+SVG_UP+'</button>';
       t += '<button class="tbtn" data-tovideo="'+idx+'" title="Add to video (uses the video type you have open)">'+SVG_VID+'</button>';
     }
+    if (gen.type === 'video' && gen.omni){ t += '<button class="tbtn" data-omniedit="'+idx+'" title="Edit this clip with a follow-up prompt (Gemini Omni)">Edit</button>'; }
     return t + '</div>';
   }
   function wireItemTools(card, gen){
@@ -824,6 +825,15 @@
     [].forEach.call(card.querySelectorAll('[data-dl]'), function(b){ b.onclick = function(){ downloadItem(gen, +b.getAttribute('data-dl')); }; });
     [].forEach.call(card.querySelectorAll('[data-up]'), function(b){ b.onclick = function(){ upscaleItem(gen, +b.getAttribute('data-up'), b); }; });
     [].forEach.call(card.querySelectorAll('[data-tovideo]'), function(b){ b.onclick = function(){ addToVideo(gen.items[+b.getAttribute('data-tovideo')]); }; });
+    [].forEach.call(card.querySelectorAll('[data-omniedit]'), function(b){ b.onclick = function(){ editOmni(gen, +b.getAttribute('data-omniedit')); }; });
+  }
+  function editOmni(gen, idx){
+    var instr = prompt('Describe the edit (e.g. "make it night-time, keep everything else the same"):');
+    if (instr == null || !instr.trim()) return;
+    fetch('/api/edit-omni', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ recordId: gen.id, idx: idx, prompt: instr.trim() }) })
+      .then(handleJson)
+      .then(function(d){ if(d.credits!=null) setCredits(d.credits); var g = recordToGen(d.record); feedEl.insertBefore(makeCard(g), feedEl.firstChild); if(g.status==='generating') pollRecord(g); })
+      .catch(function(err){ showBanner(err.message); });
   }
   function promptSlug(p){
     var w = (p||'').toLowerCase().replace(/[^a-z0-9\s-]/g,'').split(/\s+/).filter(Boolean).slice(0,4);
@@ -938,6 +948,12 @@
       .then(handleJson)
       .then(function(d){ if(d.credits!=null) setCredits(d.credits); acard.remove(); feedEl.insertBefore(makeCard(recordToGen(d.record)), feedEl.firstChild); })
       .catch(function(err){ acard.remove(); restoreInputs(snap); showBanner(err.message); });
+    } else if (cfg.model === 'omni'){
+      fetch('/api/generate-omni', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
+      .then(handleJson)
+      .then(function(d){ if(d.credits!=null) setCredits(d.credits); var g = recordToGen(d.record); feedEl.insertBefore(makeCard(g), feedEl.firstChild); if(g.status==='generating') pollRecord(g); })
+      .catch(function(err){ restoreInputs(snap); showBanner(err.message); });
     } else {
       fetch('/api/generate-video', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ mode: cfg.genMode || 'video', prompt: cfg.prompt, aspectRatio: cfg.aspect, duration: cfg.duration, negativePrompt: cfg.neg, resolution: cfg.resolution || '1080p', model: cfg.model || 'fast', frames: cfg.frames || [], references: cfg.references || [], count: cfg.count }) })
@@ -949,7 +965,7 @@
   function pollRecord(gen){
     var tick = setInterval(function(){ var any=false; (gen.slots||[]).forEach(function(s){ if(s.status==='generating'){ s.progress=Math.min(92,(s.progress||8)+6); any=true; } }); if(any) updateCard(gen); }, 4000);
     var poll = function(){
-      fetch('/api/video-status?recordId=' + encodeURIComponent(gen.id)).then(handleJson).then(function(d){
+      fetch((gen.omni ? '/api/omni-status?recordId=' : '/api/video-status?recordId=') + encodeURIComponent(gen.id)).then(handleJson).then(function(d){
         if (d.credits!=null) setCredits(d.credits);
         mergeVideoRecord(gen, d.record); updateCard(gen);
         if (d.record.status === 'generating') setTimeout(poll, 8000); else clearInterval(tick);

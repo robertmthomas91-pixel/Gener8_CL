@@ -27,12 +27,14 @@ fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
 const DEFAULT_SETTINGS = {
   startCredits: 20000, imageCost: 2, imageProCost: 4, upscaleCost: 4,
-  videoLite: 10, videoFast: 20, hdMultiplier: 1.5, voCost: 2, musicCost: 10,
+  videoLite: 10, videoFast: 20, hdMultiplier: 1.5, voCost: 2, musicCost: 10, omniCost: 25,
   retentionDays: Number(process.env.RETENTION_DAYS) || 30,
 };
 const IMAGE_MODELS = { std: "gemini-2.5-flash-image", pro: "gemini-3-pro-image-preview" };
 const IMAGE_PRO_MODEL = IMAGE_MODELS.pro;
 const VIDEO_MODELS = { fast: "veo-3.1-fast-generate-preview", lite: "veo-3.1-lite-generate-preview" };
+const OMNI_MODEL = "gemini-omni-flash-preview"; // Gemini Omni (Interactions API)
+const OMNI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const ELEVEN_TTS_MODEL = "eleven_multilingual_v2";
 const ELEVEN_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM";
 const MAX_ADDED_VOICES = 10;
@@ -58,7 +60,7 @@ async function openDb() {
 }
 
 function settingsOf(tenant) { return { ...DEFAULT_SETTINGS, ...(tenant && tenant.settings ? tenant.settings : {}) }; }
-function pricingPublic(tenant) { const s = settingsOf(tenant); return { startCredits: s.startCredits, imageCost: s.imageCost, imageProCost: s.imageProCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, voCost: s.voCost, musicCost: s.musicCost, retentionDays: s.retentionDays }; }
+function pricingPublic(tenant) { const s = settingsOf(tenant); return { startCredits: s.startCredits, imageCost: s.imageCost, imageProCost: s.imageProCost, upscaleCost: s.upscaleCost, videoLite: s.videoLite, videoFast: s.videoFast, hdMultiplier: s.hdMultiplier, voCost: s.voCost, musicCost: s.musicCost, omniCost: s.omniCost, retentionDays: s.retentionDays }; }
 
 // ---- per-tenant model clients ----------------------------------------------
 const aiCache = new Map();
@@ -161,7 +163,7 @@ function toInlineImage(dataUrl) { if (!dataUrl || typeof dataUrl !== "string") r
 
 function clientRecord(r) {
   return {
-    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, voiceName: r.voiceName || null, genMode: r.genMode, imodel: r.imodel || null, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
+    id: r.id, type: r.type, subtype: r.subtype || null, voice: r.voice || null, voiceName: r.voiceName || null, genMode: r.genMode, imodel: r.imodel || null, omni: r.omni || false, prompt: r.prompt, neg: r.neg || "", model: r.model || "fast", aspect: r.aspect,
     count: r.count, duration: r.duration, resolution: r.resolution,
     items: r.items, inputs: r.inputs || [], upscaled: r.upscaled, status: r.status, createdAt: r.createdAt,
     slots: r.slots ? r.slots.map((s) => ({ status: s.status, error: s.error })) : undefined,
@@ -466,6 +468,111 @@ app.get("/api/video-status", requireAuth, asyncMw(async (req, res) => {
   res.json({ record: clientRecord(r), credits: Number((await store.getUserById(u.id)).credits) });
 }));
 
+// ---- GEMINI OMNI (Interactions API: text/image/reference -> video, + editing) ----
+function omniVideoOut(resp) {
+  const steps = resp?.steps || [];
+  for (const st of steps) for (const cnt of (st.content || [])) if (cnt.type === "video") return { uri: cnt.uri || null, data: cnt.data || null };
+  if (resp?.output_video) return { uri: resp.output_video.uri || null, data: resp.output_video.data || null };
+  return { uri: null, data: null };
+}
+function omniFileId(uri) { const m = (uri || "").match(/files\/([^:?/]+)/); return m ? m[1] : null; }
+async function omniCreate(key, body) {
+  const r = await fetch(`${OMNI_BASE}/interactions`, { method: "POST", headers: { "x-goog-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`Omni ${r.status}: ${(await r.text()).slice(0, 180)}`);
+  return r.json();
+}
+async function omniFileState(key, id) { try { const r = await fetch(`${OMNI_BASE}/files/${id}`, { headers: { "x-goog-api-key": key } }); if (!r.ok) return null; const d = await r.json(); return (typeof d.state === "string" ? d.state : (d.state && d.state.name)) || null; } catch { return null; } }
+async function omniDownload(key, id) { const r = await fetch(`${OMNI_BASE}/files/${id}:download?alt=media`, { headers: { "x-goog-api-key": key }, redirect: "follow" }); if (!r.ok) return null; return Buffer.from(await r.arrayBuffer()); }
+
+app.post("/api/generate-omni", genLimit, requireAuth, asyncMw(async (req, res) => {
+  const t = req.tenant, u = req.user; const s = settingsOf(t); let reserved = 0;
+  if (!t || !t.geminiKey) return res.status(503).json({ error: "This workspace has no Gemini API key yet. An admin must add it." });
+  try {
+    const { mode = "video", prompt, aspectRatio = "16:9", references = [], frames = [], count = 1 } = req.body || {};
+    if (!prompt || !prompt.trim()) return res.status(400).json({ error: "A prompt is required." });
+    const n = Math.max(1, Math.min(Number(count) || 1, 4));
+    const aspect = aspectRatio === "9:16" ? "9:16" : "16:9";
+    // Build input + task BEFORE reserving (so validation failures don't charge).
+    let input, task, inputUrls = [];
+    if (mode === "frames") {
+      const im = toImage(frames[0]); if (!im) return res.status(400).json({ error: "Image → Video needs an input image." });
+      input = [{ type: "image", data: im.imageBytes, mime_type: im.mimeType }, { type: "text", text: prompt }]; task = "image_to_video";
+      const iu = await saveInputUrl(frames[0], t.id, u.id); if (iu) inputUrls.push(iu);
+    } else if (mode === "ingredients") {
+      const refs = (references || []).map(toImage).filter(Boolean).slice(0, 3); if (!refs.length) return res.status(400).json({ error: "Ingredients needs at least one reference image." });
+      input = [...refs.map((im) => ({ type: "image", data: im.imageBytes, mime_type: im.mimeType })), { type: "text", text: prompt }]; task = "reference_to_video";
+      for (const d of (references || []).slice(0, 3)) { const iu = await saveInputUrl(d, t.id, u.id); if (iu) inputUrls.push(iu); }
+    } else { input = prompt; task = "text_to_video"; }
+    const per = s.omniCost;
+    if ((await store.reserve(u.id, per * n)) === null) return res.status(402).json({ error: `Not enough credits — this needs ${per * n}.` });
+    reserved = per * n;
+    const slots = [];
+    for (let k = 0; k < n; k++) {
+      try {
+        const resp = await omniCreate(t.geminiKey, { model: OMNI_MODEL, input, response_format: { type: "video", aspect_ratio: aspect, delivery: "uri" }, generation_config: { video_config: { task } } });
+        const v = omniVideoOut(resp); const fid = omniFileId(v.uri);
+        if (v.data && !fid) { const url = await saveMedia(Buffer.from(v.data, "base64"), "mp4", t.id, u.id); slots.push({ status: "done", url, interactionId: resp.id || null, error: null }); }
+        else if (fid) slots.push({ status: "generating", fileId: fid, interactionId: resp.id || null, error: null });
+        else { slots.push({ status: "error", error: "Omni returned no video." }); await store.refund(u.id, per); }
+      } catch (e) { slots.push({ status: "error", error: e?.message || "Failed to start." }); await store.refund(u.id, per); }
+    }
+    const items = slots.map((sl) => sl.url || null);
+    const allErr = slots.every((sl) => sl.status === "error");
+    const anyGen = slots.some((sl) => sl.status === "generating");
+    const rec = { id: rid(), tenantId: t.id, userId: u.id, type: "video", omni: true, genMode: mode, prompt, aspect, count: n, resolution: "auto", model: "omni", perClip: per, perClipUsd: 0.5, items, inputs: inputUrls, slots, status: allErr ? "error" : (anyGen ? "generating" : "done"), createdAt: Date.now() };
+    await store.addFeed(rec);
+    res.json({ record: clientRecord(rec), credits: Number((await store.getUserById(u.id)).credits) });
+  } catch (e) { if (reserved) await store.refund(u.id, reserved); captureError(e, { route: "generate-omni" }); res.status(500).json({ error: e?.message || "Omni generation failed." }); }
+}));
+
+app.get("/api/omni-status", requireAuth, asyncMw(async (req, res) => {
+  const u = req.user, t = req.tenant;
+  const r = await store.getFeed(req.query.recordId);
+  if (!r || r.userId !== u.id) return res.status(404).json({ error: "No such record." });
+  if (!r.omni) return res.status(400).json({ error: "Not an Omni record." });
+  const key = t && t.geminiKey; const per = r.perClip || 25;
+  await Promise.all((r.slots || []).map(async (slot, i) => {
+    if (slot.status !== "generating" || !slot.fileId) return;
+    if (!key) { slot.status = "error"; slot.error = "Workspace key missing (refunded)."; await store.refund(u.id, per); return; }
+    const st = await omniFileState(key, slot.fileId);
+    if (st === "FAILED") { slot.status = "error"; slot.error = "Generation failed (refunded)."; await store.refund(u.id, per); return; }
+    if (st !== "ACTIVE") return;
+    const buf = await omniDownload(key, slot.fileId);
+    if (!buf) return; // try again next poll
+    r.items[i] = await saveMedia(buf, "mp4", t.id, u.id);
+    slot.status = "done";
+    await store.recordUsage(u.id, t.id, "videos", 1, r.perClip || 0, r.perClipUsd || 0);
+  }));
+  if ((r.slots || []).every((sl) => sl.status !== "generating")) r.status = r.slots.every((sl) => sl.status === "error") ? "error" : "done";
+  await store.updateFeed(r);
+  res.json({ record: clientRecord(r), credits: Number((await store.getUserById(u.id)).credits) });
+}));
+
+app.post("/api/edit-omni", genLimit, requireAuth, asyncMw(async (req, res) => {
+  const t = req.tenant, u = req.user; const s = settingsOf(t); let reserved = 0;
+  if (!t || !t.geminiKey) return res.status(503).json({ error: "This workspace has no Gemini API key yet." });
+  const { recordId, idx, prompt } = req.body || {};
+  if (!prompt || !prompt.trim()) return res.status(400).json({ error: "An edit instruction is required." });
+  const src = await store.getFeed(recordId);
+  if (!src || src.userId !== u.id || !src.omni) return res.status(404).json({ error: "No such Omni clip." });
+  const i = Number(idx) || 0; const slot = (src.slots || [])[i];
+  const prevId = slot && slot.interactionId;
+  if (!prevId) return res.status(400).json({ error: "This clip can't be edited." });
+  if ((await store.reserve(u.id, s.omniCost)) === null) return res.status(402).json({ error: `Not enough credits — this needs ${s.omniCost}.` });
+  reserved = s.omniCost;
+  try {
+    const resp = await omniCreate(t.geminiKey, { model: OMNI_MODEL, previous_interaction_id: prevId, input: prompt.trim(), response_format: { type: "video", aspect_ratio: src.aspect || "16:9", delivery: "uri" } });
+    const v = omniVideoOut(resp); const fid = omniFileId(v.uri);
+    let slots, items, status;
+    if (v.data && !fid) { const url = await saveMedia(Buffer.from(v.data, "base64"), "mp4", t.id, u.id); slots = [{ status: "done", url, interactionId: resp.id || null, error: null }]; items = [url]; status = "done"; }
+    else if (fid) { slots = [{ status: "generating", fileId: fid, interactionId: resp.id || null, error: null }]; items = [null]; status = "generating"; }
+    else { await store.refund(u.id, reserved); return res.status(502).json({ error: "Omni returned no video." }); }
+    const rec = { id: rid(), tenantId: t.id, userId: u.id, type: "video", omni: true, genMode: "edit", prompt: "Edit: " + prompt.trim(), aspect: src.aspect || "16:9", count: 1, resolution: "auto", model: "omni", perClip: s.omniCost, perClipUsd: 0.5, items, inputs: [], slots, status, createdAt: Date.now() };
+    await store.addFeed(rec);
+    res.json({ record: clientRecord(rec), credits: Number((await store.getUserById(u.id)).credits) });
+  } catch (e) { if (reserved) await store.refund(u.id, reserved); captureError(e, { route: "edit-omni" }); res.status(500).json({ error: e?.message || "Omni edit failed." }); }
+}));
+
 // ---- media serving ----------------------------------------------------------
 app.get("/media/:file", requireAuth, asyncMw(async (req, res) => {
   const fn = path.basename(req.params.file);
@@ -534,7 +641,7 @@ app.post("/api/admin/users/:id/password", requireAdmin, asyncMw(async (req, res)
 app.get("/api/admin/settings", requireAdmin, asyncMw(async (req, res) => res.json({ settings: settingsOf(req.tenant) })));
 app.post("/api/admin/settings", requireAdmin, asyncMw(async (req, res) => {
   const tid = req.user.tenant_id; if (!tid) return res.status(400).json({ error: "No workspace." });
-  const allowed = ["startCredits", "imageCost", "imageProCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "voCost", "musicCost", "retentionDays"];
+  const allowed = ["startCredits", "imageCost", "imageProCost", "upscaleCost", "videoLite", "videoFast", "hdMultiplier", "voCost", "musicCost", "omniCost", "retentionDays"];
   const cur = settingsOf(req.tenant); const b = req.body || {};
   for (const k of allowed) { if (b[k] == null || !Number.isFinite(+b[k])) continue; let v = +b[k]; if (k !== "hdMultiplier") v = Math.round(v); cur[k] = Math.max(k === "hdMultiplier" ? 1 : 0, v); }
   const t = await store.updateTenant(tid, { settings: cur });
